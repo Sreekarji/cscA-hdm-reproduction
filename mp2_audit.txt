@@ -1,0 +1,179 @@
+CSCA-SemCom Codebase Audit
+D:\MP2
+Generated: 2026-07-24
+
+================================================================================
+PART 1 — CORRECTNESS AUDIT
+================================================================================
+
+| Fix    | Status  | File             | Line | Note |
+|--------|---------|------------------|------|------|
+| FIX 1  | FAIL    | sim_channel.py   | 614  | Original vartheta_S_int = 1.0 - quality_intents[i] replaced by Eq. 19-20 relaxation. The raw 1.0 - quality_intents[i] no longer appears. |
+| FIX 2  | PASS    | train_han_mlp.py | 175  | Three separate optimizers: opt_han(1e-4), opt_actor(1e-4 DDPM), opt_critic(3e-4). |
+| FIX 3  | PASS    | train_han_mlp.py | 302  | actor_loss = -q_value.mean(). No advantage weighting (correct per FIX 12b). |
+| FIX 4  | FAIL    | baselines.py     | 1-99 | Entire file is dead code. train_han_mlp.py defines its own PerTaskGaussianActor + train_ac/ppo/sac_baseline inline. baselines.py never imported. |
+| FIX 5  | PASS    | mcs_table.py     | 168  | compute_mim() Eq. 5, select_mcs_for_mim_and_sinr() Eq. 6. Correct. |
+| FIX 6  | PASS    | relay_selection.py | 74 | compute_distortion() uses same interpolation table as sim_channel.py. |
+| FIX 7  | PASS    | csc_graph_builder.py | 40 | Fixed round-robin edges computed in __init__. No randperm in build(). |
+| FIX 8  | PASS    | sim_channel.py   | 507  | tau_w_actual = max(0.0, traffic_load - 0.5) * 0.05. Added to delay at line 618. |
+| FIX 9  | PASS    | sim_channel.py   | 580  | MCS action hook reads action["mcs"], argmax, maps to [0,10,20], overrides rate. |
+| FIX 10 | PASS    | config.py        | 1-22 | MP2_ROOT, MINIML_PATH, DEEPSC_PATH. cscqi.py imports MINIML_PATH at line 13. |
+| FIX 11 | PASS    | train_han_mlp.py | 815  | Full comparison table with HDM, AC, PPO, SAC, Static. |
+| FIX 12a| PASS    | train_han_mlp.py | 286  | graph_emb2 NOT detached before critic. Gradient flows HAN->actor->Q. |
+| FIX 12b| PASS    | train_han_mlp.py | 302  | actor_loss = -q_value.mean(). Documented deviation from Eq. 33. |
+| FIX 12c| PASS    | train_han_mlp.py | 142  | difficulty="medium" default. |
+| FIX 12d| PASS    | train_han_mlp.py | 216  | intents_from_state() used in train_step. |
+| FIX 13a| PASS    | train_han_mlp.py | 88   | sample_eval_state() calls generate_state() + rebuilds message_features. |
+| FIX 13b| PASS    | train_han_mlp.py | 103  | intents_from_state() derives urgency from delay_intents. |
+| FIX 14a| PASS    | sim_channel.py   | 523  | BW reads all n_tasks logits with fallback. |
+| FIX 14b| PASS    | sim_channel.py   | 580  | MCS indexed by min(i, action["mcs"].shape[1]-1). |
+| FIX 14c| PASS    | train_han_mlp.py | 145  | action_dim = n_tasks + n_tasks*n_mcs (no relay). |
+| FIX 15 | PASS    | train_han_mlp.py | 225  | Exploration noise (DDPM 0.10->0.02, MLP 0.2->0.02), zero critic grads after actor. |
+| FIX 16 | PARTIAL | train_han_mlp.py | 457  | PerTaskGaussianActor correct but baselines.py still has old dead code. |
+| FIX 17a| PASS    | train_han_mlp.py | 195  | Replay buffer 2000, minibatch 128. |
+| FIX 17b| PASS    | train_han_mlp.py | 231  | Simplex-preserving noise (BW re-projected). |
+| FIX 17c| PASS    | train_han_mlp.py | 200  | StepLR(step_size=300, gamma=0.7). |
+| FIX 17d| PASS    | train_han_mlp.py | 345  | 50-episode eval for checkpointing. |
+| FIX 17e| PASS    | train_han_mlp.py | 811  | max_episodes=1000. |
+| FIX 18 | PASS    | ddpm_policy.py   | 1-126| DDPMActor with 6-step reverse diffusion, per-task denoising, near-zero init. |
+| FIX 19 | PASS    | train_han_mlp.py | 457  | PerTaskGaussianActor with per-task BW head + global MCS head on msg_embs. |
+| FIX 20 | PASS    | final_results.py | 1-300| Full experiment suite with CSVs, plots, SUMMARY.txt. |
+
+PHASE FIXES:
+
+| Fix              | Status | File             | Line | Note |
+|------------------|--------|------------------|------|------|
+| 1A: Eq. 19-20    | PASS   | sim_channel.py   | 613  | tau_int_effective and vartheta_int_effective with exp(0.5/0.3*tau_w). |
+| 1B: relay 2x rate| PASS   | sim_channel.py   | 609  | tau_relay_rx = data_size / max(rate * 2.0, 1e3). |
+| 3A: 4-value returns| PASS  | train_han_mlp.py | 404  | All three eval functions return (isr, std, delay, dist). |
+| LR decay         | PASS   | train_han_mlp.py | 200  | StepLR(step_size=300, gamma=0.7). |
+| DDPM sigma       | PASS   | train_han_mlp.py | 227  | max(0.02, 0.10 * (1.0 - episode/1000)). |
+| critic_batch     | PASS   | train_han_mlp.py | 198  | critic_batch = 128. |
+| PPO batch        | PASS   | train_han_mlp.py | 613  | batch_size = 32. |
+| Checkpoint path  | PASS   | final_results.py | 55   | Imports CHECKPOINT_PATH from train_han_mlp. |
+| Medium difficulty| PASS   | sim_channel.py   | 394  | delay=(0.15,0.50), quality=(0.60,0.85). |
+| actor_loss       | PASS   | train_han_mlp.py | 302  | actor_loss = -q_value.mean(). No log_pi. |
+| _ckpt_suffix     | PASS   | train_han_mlp.py | 207  | self._ckpt_suffix = "" in __init__. Used at line 369. |
+
+SUMMARY: PASS=25, FAIL=2, PARTIAL=1
+
+================================================================================
+PART 2 — PAPER COMPLIANCE AUDIT
+================================================================================
+
+| Equation  | Status     | File             | Line | Note |
+|-----------|------------|------------------|------|------|
+| Eq. 5 (MIM)         | COMPLIANT  | mcs_table.py     | 168  | sum(p * exp(-p)) for normalized probs. |
+| Eq. 6 (MCS BER)     | COMPLIANT  | mcs_table.py     | 180  | max_ber = bw_weight * (1 - MIM). Called from HDM path only (documented skip). |
+| Eq. 15 (Relay)      | PARTIAL    | relay_selection.py | 97 | Simplified cosine-similarity proxy. Not full semantic MI. Documented deviation. |
+| Eq. 16 (Delay)      | COMPLIANT  | sim_channel.py   | 602  | tau_S = tau_AB + tau_w + recovery_delay + tau_relay_rx. Correct. |
+| Eq. 17 (CSCQI)      | COMPLIANT  | cscqi.py         | 55   | w_tau=0.5, w_vartheta=0.5. Hard negative for unmet intent. Correct. |
+| Eq. 18 (ISR)        | COMPLIANT  | cscqi.py         | 104  | tau_S <= tau_S_int AND vartheta_S <= vartheta_S_int. Correct. |
+| Eq. 19-20           | COMPLIANT  | sim_channel.py   | 613  | exp(0.5*tau_w) for delay, exp(0.3*tau_w) for quality. Documented. |
+| Eq. 30 (DDPM mean)  | COMPLIANT  | ddpm_policy.py   | 89   | (1/sqrt(alpha)) * (a - (beta/sqrt(1-abar)) * eps). Correct. |
+| Eq. 33 (Actor loss)  | DEVIATION  | train_han_mlp.py | 291  | Uses -Q.mean() (DPG) instead of E[log_pi * (R-V(s))] (AC). Documented at line 291-293. Ablation showed -5.5% ISR with Eq. 33. |
+| Eq. 35 (Critic loss) | COMPLIANT  | train_han_mlp.py | 264  | nn.MSELoss()(value_pred, r_mb). Correct. |
+
+SUMMARY: COMPLIANT=8, PARTIAL=1, DEVIATION=1
+
+================================================================================
+PART 3 — CODE QUALITY AUDIT
+================================================================================
+
+A) DEAD CODE
+-----------------
+
+File: baselines.py (entire file, lines 1-99)
+Issue: Dead code. train_han_mlp.py defines its own PerTaskGaussianActor + train_ac/ppo/sac_baseline inline. baselines.py is never imported.
+Severity: MEDIUM
+
+File: hdm_trainer.py (entire file, ~300 lines)
+Issue: Imports ValueCritic and TPC_TO_IDX from ddpm_policy (line 22), but DDPMActor no longer exports those. Import will crash if called. Dead code — train_han_mlp.py replaced it.
+Severity: HIGH (broken import, crash if accidentally imported)
+
+File: mlp_trainer.py (entire file, ~200 lines)
+Issue: Same broken import — ValueCritic and TPC_TO_IDX from ddpm_policy no longer exist.
+Severity: HIGH (broken import, crash if accidentally imported)
+
+File: train_baselines.py (entire file, ~250 lines)
+Issue: Same broken import — ValueCritic and TPC_TO_IDX from ddpm_policy no longer exist.
+Severity: HIGH (broken import, crash if accidentally imported)
+
+File: train_han_mlp.py line 296-300
+Issue: EMA baseline code (self._ema_reward) is computed but never used in the loss. actor_loss = -q_value.mean() ignores it.
+Severity: LOW (dead computation, no harm)
+
+B) HARDCODED PATHS
+-----------------
+
+File: train_han_mlp.py line 44-48
+Issue: Five sys.path.insert lines with r"D:\MP2\code\*" hardcoded.
+Severity: MEDIUM
+
+File: train_han_mlp.py line 54
+Issue: LOG_PATH = r"D:\MP2\log.txt" — hardcoded, not from config.py.
+Severity: MEDIUM
+
+File: train_han_mlp.py line 55
+Issue: CHECKPOINT_PATH = r"D:\MP2\results\checkpoints" — hardcoded, not from config.py.
+Severity: MEDIUM
+
+C) DEBUG ARTIFACTS
+-----------------
+
+File: ddpm_policy.py line 125
+Issue: print() in __main__ block — only runs when executed directly. Acceptable.
+Severity: LOW
+
+File: train_han_mlp.py line 855
+Issue: print() for gradient sanity check — intentional diagnostic.
+Severity: LOW
+
+D) MISSING DOCSTRINGS
+-----------------
+
+File: train_han_mlp.py line 75
+Issue: log() function — no docstring.
+Severity: LOW
+
+File: train_han_mlp.py line 62
+Issue: _act() helper — no docstring.
+Severity: LOW
+
+File: ablation_logpi.py line 106
+Issue: LogPiTrainer class — no docstring.
+Severity: LOW
+
+E) INCONSISTENCIES BETWEEN FILES
+-----------------
+
+File: config.py line 18 vs train_han_mlp.py line 55
+Issue: config.py defines CHECKPOINT_PATH as MP2_ROOT / "checkpoints" but train_han_mlp.py hardcodes r"D:\MP2\results\checkpoints". These point to DIFFERENT directories. final_results.py imports from train_han_mlp.py so it uses results\checkpoints. config.py's version would use checkpoints/.
+Severity: HIGH (path mismatch, checkpoint reads/writes could target wrong directory)
+
+File: sim_channel.py lines 496-501 vs 613-615
+Issue: Two separate intent relaxation mechanisms applied sequentially. First: adjust_intent() with omega1=0.05, omega2=0.02 (old FIX 8 approach). Second: Eq. 19-20 exp relaxation with coefficients 0.5 and 0.3. Double relaxation may produce tighter-than-intended thresholds.
+Severity: HIGH (double relaxation, unclear if intended)
+
+File: baselines.py vs train_han_mlp.py
+Issue: baselines.py defines GaussianActor (flat MLP, no msg_embs). train_han_mlp.py defines PerTaskGaussianActor (per-task with msg_embs). If someone imports from baselines.py they get the wrong code.
+Severity: MEDIUM (confusing, but file is dead code)
+
+File: hdm_trainer.py line 22, mlp_trainer.py line 15, train_baselines.py line 8
+Issue: All three import ValueCritic and TPC_TO_IDX from ddpm_policy which no longer exist. Any import of these files will crash with ImportError.
+Severity: HIGH (crash on import)
+
+================================================================================
+OVERALL SUMMARY
+================================================================================
+
+Part 1 — Correctness:  PASS=25, FAIL=2, PARTIAL=1
+Part 2 — Compliance:   COMPLIANT=8, PARTIAL=1, DEVIATION=1
+Part 3 — Code Quality: HIGH=5, MEDIUM=8, LOW=5
+
+HIGH SEVERITY ISSUES (5):
+1. hdm_trainer.py — broken import (ValueCritic, TPC_TO_IDX removed from ddpm_policy.py)
+2. mlp_trainer.py — broken import (same)
+3. train_baselines.py — broken import (same)
+4. config.py vs train_han_mlp.py — CHECKPOINT_PATH points to different directories
+5. sim_channel.py — double intent relaxation (adjust_intent + Eq. 19-20)
