@@ -78,11 +78,11 @@ def log(msg):
 
 
 def sample_eval_state(env):
-    """Canonical state distribution — used by ALL policies for training and eval."""
+    """Canonical state distribution — used by ALL policies for training and eval.
+    Now that generate_state() medium difficulty uses the calibrated ranges,
+    this just calls generate_state() and rebuilds message_features."""
     state = env.generate_state()
     n = env.n_tasks
-    state["SCt"]["delay_intents"]   = np.random.uniform(0.15, 0.50, n).tolist()
-    state["SCt"]["quality_intents"] = np.random.uniform(0.60, 0.85, n).tolist()
     for i in range(n):
         ds_norm = min(state["SCt"]["data_sizes"][i] / 6e5, 1.0)
         di = state["SCt"]["delay_intents"][i]
@@ -187,11 +187,11 @@ class HANMLPTrainer:
         # FIX 17a: Replay buffer for critic
         self.replay = []
         self.replay_cap = 2000
-        self.critic_batch = 64
+        self.critic_batch = 128   # 200-dim action needs more samples per Q-update
 
         # FIX 17c: LR decay for actor and HAN
-        self.sched_han   = optim.lr_scheduler.StepLR(self.opt_han,   step_size=200, gamma=0.5)
-        self.sched_actor = optim.lr_scheduler.StepLR(self.opt_actor, step_size=200, gamma=0.5)
+        self.sched_han   = optim.lr_scheduler.StepLR(self.opt_han,   step_size=300, gamma=0.7)
+        self.sched_actor = optim.lr_scheduler.StepLR(self.opt_actor, step_size=300, gamma=0.7)
 
         self.episode = 0
         self.best_isr = 0.0
@@ -215,7 +215,7 @@ class HANMLPTrainer:
         # Exploration noise: annealed (FIX 17b)
         # DDPM is already stochastic, so use less external noise
         if POLICY == "ddpm":
-            sigma = max(0.01, 0.05 * (1.0 - self.episode / 1000))
+            sigma = max(0.02, 0.10 * (1.0 - self.episode / 1000))
         else:
             sigma = max(0.02, 0.2 * (1.0 - self.episode / 1000))
         noise = torch.randn_like(action) * sigma
@@ -589,7 +589,7 @@ def train_ppo_baseline(
     han: HANNetwork, env: MultiCSCAEnvironment,
     n_tasks: int, n_relays: int, n_mcs: int,
     action_dim: int, n_episodes: int = 1000, lr: float = 3e-4,
-    batch_size: int = 64, n_epochs: int = 4, eps_clip: float = 0.2,
+    batch_size: int = 32, n_epochs: int = 4, eps_clip: float = 0.2,
 ) -> PerTaskGaussianActor:
     """PPO: Gaussian policy, clipped surrogate, batched updates."""
     for p in han.parameters():

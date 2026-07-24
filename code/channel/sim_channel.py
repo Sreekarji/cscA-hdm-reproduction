@@ -392,8 +392,8 @@ class MultiCSCAEnvironment:
             quality_intents = np.random.uniform(0.92, 1.00, self.n_tasks).tolist()
             data_sizes      = (np.random.rand(self.n_tasks) * 0.5e6 + 0.1e6).tolist()
         elif self.difficulty == "medium":
-            delay_intents   = np.random.uniform(0.1, 0.6, self.n_tasks).tolist()
-            quality_intents = np.random.uniform(0.90, 0.97, self.n_tasks).tolist()
+            delay_intents   = np.random.uniform(0.15, 0.50, self.n_tasks).tolist()
+            quality_intents = np.random.uniform(0.60, 0.85, self.n_tasks).tolist()
             data_sizes      = (np.random.rand(self.n_tasks) * 0.4e6 + 0.1e6).tolist()
         else:  # easy
             delay_intents   = np.random.uniform(0.3, 1.0, self.n_tasks).tolist()

@@ -19,7 +19,7 @@ for sub in ["code/hdm", "code/channel", "code/evaluation", "code/utils", "code/e
 from reproducibility import set_seed
 from train_han_mlp import (
     HANMLPTrainer, evaluate_policy, evaluate_static, evaluate_baseline_actor,
-    sample_eval_state, intents_from_state, parse_action, DEVICE, POLICY,
+    sample_eval_state, intents_from_state, parse_action, DEVICE, POLICY, CHECKPOINT_PATH,
     train_ac_baseline, train_ppo_baseline, train_sac_baseline, PerTaskGaussianActor,
     MultiCSCAEnvironment, compute_isr, compute_cscqi,
 )
@@ -51,7 +51,7 @@ def run_one_tpc(tpc):
     best_isr = trainer.train(max_episodes=1000)
 
     # Load best checkpoint
-    ckpt_path = os.path.join(BASE, "checkpoints", f"han_{POLICY}_tpc{tpc}_best.pt")
+    ckpt_path = os.path.join(CHECKPOINT_PATH, f"han_{POLICY}_tpc{tpc}_best.pt")
     if os.path.exists(ckpt_path):
         ckpt = torch.load(ckpt_path, map_location=DEVICE)
         trainer.han.load_state_dict(ckpt["han"])
@@ -175,45 +175,46 @@ def main():
     print(f"Wrote isr_vs_tpc.png")
 
     # Plot 2: Convergence at tpc=4
-    fig, ax = plt.subplots(figsize=(8, 5))
-    hist4 = all_history[4]
-    eps = [h[0] for h in hist4]
-    train_isr = [h[2] for h in hist4]
-    ax.scatter(eps, train_isr, alpha=0.3, s=10, color="gray", label="Train ISR (per-step)")
-    # Smooth
-    if len(train_isr) > 5:
-        window = min(10, len(train_isr) // 3)
-        smoothed = np.convolve(train_isr, np.ones(window)/window, mode='valid')
-        eps_smooth = eps[window-1:]
-        ax.plot(eps_smooth, smoothed, color="blue", lw=2, label="Train ISR (smoothed)")
-    ax.set_xlabel("Episode")
-    ax.set_ylabel("ISR")
-    ax.set_title("HDM Convergence (tpc=4)")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, "convergence_tpc4.png"), dpi=150)
-    plt.close()
-    print(f"Wrote convergence_tpc4.png")
+    if 4 in all_history:
+        hist4 = all_history[4]
+        fig, ax = plt.subplots(figsize=(8, 5))
+        eps = [h[0] for h in hist4]
+        train_isr = [h[2] for h in hist4]
+        ax.scatter(eps, train_isr, alpha=0.3, s=10, color="gray", label="Train ISR (per-step)")
+        if len(train_isr) > 5:
+            window = min(10, len(train_isr) // 3)
+            smoothed = np.convolve(train_isr, np.ones(window)/window, mode='valid')
+            eps_smooth = eps[window-1:]
+            ax.plot(eps_smooth, smoothed, color="blue", lw=2, label="Train ISR (smoothed)")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("ISR")
+        ax.set_title("HDM Convergence (tpc=4)")
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(RESULTS_DIR, "convergence_tpc4.png"), dpi=150)
+        plt.close()
+        print(f"Wrote convergence_tpc4.png")
 
     # Plot 3: Improvement bar chart at tpc=4
-    fig, ax = plt.subplots(figsize=(8, 5))
-    policies = ["HDM", "AC", "PPO", "SAC", "Static"]
-    isrs = [all_results[4][p][0] for p in policies]
-    colors = ["blue", "red", "green", "orange", "gray"]
-    bars = ax.bar(policies, isrs, color=colors, alpha=0.7)
-    static_isr = all_results[4]["Static"][0]
-    for bar, isr in zip(bars, isrs):
-        pct = (isr - static_isr) / max(static_isr, 1e-6) * 100
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,
-                f"{pct:+.0f}%", ha="center", fontsize=9)
-    ax.set_ylabel("ISR")
-    ax.set_title(f"ISR Comparison at tpc=4 ({POLICY.upper()} policy)")
-    ax.grid(True, alpha=0.3, axis="y")
-    plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, "improvement_bar.png"), dpi=150)
-    plt.close()
-    print(f"Wrote improvement_bar.png")
+    if 4 in all_results:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        policies = ["HDM", "AC", "PPO", "SAC", "Static"]
+        isrs = [all_results[4][p][0] for p in policies]
+        colors = ["blue", "red", "green", "orange", "gray"]
+        bars = ax.bar(policies, isrs, color=colors, alpha=0.7)
+        static_isr = all_results[4]["Static"][0]
+        for bar, isr in zip(bars, isrs):
+            pct = (isr - static_isr) / max(static_isr, 1e-6) * 100
+            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.005,
+                    f"{pct:+.0f}%", ha="center", fontsize=9)
+        ax.set_ylabel("ISR")
+        ax.set_title(f"ISR Comparison at tpc=4 ({POLICY.upper()} policy)")
+        ax.grid(True, alpha=0.3, axis="y")
+        plt.tight_layout()
+        plt.savefig(os.path.join(RESULTS_DIR, "improvement_bar.png"), dpi=150)
+        plt.close()
+        print(f"Wrote improvement_bar.png")
 
     # Write SUMMARY.txt
     summary_path = os.path.join(RESULTS_DIR, "SUMMARY.txt")
@@ -238,11 +239,12 @@ def main():
             f.write(f"  HDM vs best RL baseline: {(hdm-best_bl)/max(best_bl,1e-6)*100:+.1f}%\n\n")
 
         f.write("=" * 60 + "\n")
-        hdm4 = all_results[4]["HDM"][0]
-        static4 = all_results[4]["Static"][0]
-        best_bl4 = max(all_results[4][p][0] for p in ["AC", "PPO", "SAC"])
-        f.write(f"HDM improvement over Static at tpc=4: {(hdm4-static4)/max(static4,1e-6)*100:+.1f}%\n")
-        f.write(f"HDM improvement over best RL baseline at tpc=4: {(hdm4-best_bl4)/max(best_bl4,1e-6)*100:+.1f}%\n")
+        if 4 in all_results:
+            hdm4 = all_results[4]["HDM"][0]
+            static4 = all_results[4]["Static"][0]
+            best_bl4 = max(all_results[4][p][0] for p in ["AC", "PPO", "SAC"])
+            f.write(f"HDM improvement over Static at tpc=4: {(hdm4-static4)/max(static4,1e-6)*100:+.1f}%\n")
+            f.write(f"HDM improvement over best RL baseline at tpc=4: {(hdm4-best_bl4)/max(best_bl4,1e-6)*100:+.1f}%\n")
         f.write("=" * 60 + "\n")
 
     print(f"Wrote {summary_path}")
