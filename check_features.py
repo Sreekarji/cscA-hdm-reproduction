@@ -38,7 +38,7 @@ def main():
           "  (should be > 0)")
 
     print("\n== 2. HAN graph shapes ==")
-    han = HANNetwork(256, 8, 3, 5, 5, 5, 5).to(device)
+    han = HANNetwork(256, 8, 3, 0.1, 5, 5, 5, 5).to(device)
     for tpc in (1, 2, 10):
         e = MultiCSCAEnvironment(difficulty="medium", tasks_per_csca=tpc)
         s = e.generate_state()
