@@ -892,7 +892,7 @@ def train_sac_baseline(
             continue
 
         buf_sv.append(sv.detach())
-        buf_a.append(action.detach())
+        buf_a.append(action.detach().squeeze(0))
         buf_r.append(reward)
         if len(buf_sv) > replay_size:
             buf_sv, buf_a, buf_r = buf_sv[-replay_size:], buf_a[-replay_size:], buf_r[-replay_size:]
@@ -900,7 +900,7 @@ def train_sac_baseline(
         if len(buf_sv) >= batch_size:
             idx   = np.random.choice(len(buf_sv), batch_size, replace=False)
             sv_mb = torch.stack([buf_sv[i] for i in idx])
-            a_mb  = torch.stack([buf_a[i]  for i in idx])
+            a_mb  = torch.stack([buf_a[i].squeeze(0) for i in idx])
             r_mb  = torch.tensor([buf_r[i] for i in idx],
                                   dtype=torch.float, device=DEVICE).unsqueeze(-1)
 
