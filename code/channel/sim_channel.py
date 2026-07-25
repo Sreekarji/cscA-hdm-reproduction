@@ -2,23 +2,9 @@
 Wireless Channel Simulation for CSCA.
 Implements Section IV.A from Sun et al. 2026 with exact 3GPP parameters.
 
-FIX (2026-07-08): Replaced proportional bandwidth normalisation with
-softmax-temperature allocation in MultiCSCAEnvironment.step().
-
-Root cause of HDM ≈ baselines:
-  OLD: bw_alloc = bw_frac / sum(all_fracs) * total_bw
-  When HDM outputs all-similar sigmoid values (~0.5–0.8), the ratio
-  bw_frac/sum cancels to 1/N for every task → identical to static
-  equal allocation → zero gradient signal between HDM and baseline.
-
-Fix: softmax with temperature tau=BW_SOFTMAX_TEMP amplifies small
-differences in HDM logits into meaningful BW differences.
-  bw_alloc[i] = softmax(logits / tau)[i] * total_bw
-At tau=0.3 a logit difference of 0.2 becomes a ~50% BW difference.
-At tau=1.0 (original sigmoid range) the same difference is ~5%.
-
-The temperature is exposed as a module constant so it can be tuned
-without touching training code.
+BW allocation uses _normalize_bw_allocation() — the policy emits a simplex
+directly (softmax in DDPM/MLP/Gaussian actors), and the environment
+renormalises onto total bandwidth with a per-task floor.
 """
 
 import numpy as np
@@ -50,9 +36,8 @@ DEFAULT_BANDWIDTH_HZ = 10e6
 INTERFERENCE_CELLS = 6          # top-K interferers, Section IV.A.3
 
 # ---------------------------------------------------------------------------
-# BW allocation constant — controls how sharply HDM output maps to BW
+# BW allocation
 # ---------------------------------------------------------------------------
-BW_SOFTMAX_TEMP = 1.0   # was 0.3 — too sharp, made softmax near-argmax
 
 # FIX F: Eq. 19-20 attenuation factors, single source of truth.
 OMEGA1_DELAY   = 0.05
@@ -285,39 +270,8 @@ class WirelessChannel:
 
 
 # ---------------------------------------------------------------------------
-# Softmax BW allocation helper
+# BW allocation
 # ---------------------------------------------------------------------------
-
-def _softmax_bw_allocation(
-    raw_logits: list,
-    total_bw: float,
-    temperature: float = BW_SOFTMAX_TEMP,
-) -> list:
-    """
-    Convert raw HDM bandwidth logits to actual bandwidth allocations via
-    temperature-scaled softmax.
-
-    At low temperature (0.3), a logit difference of 0.2 maps to ~50% BW
-    difference, giving the policy a strong gradient signal to differentiate
-    tasks. At temperature 1.0 the allocation is nearly proportional (same
-    as the old scheme).
-
-    Parameters
-    ----------
-    raw_logits : list of float — HDM output for each CSCA (any range)
-    total_bw   : float         — total available bandwidth in Hz
-    temperature: float         — softmax sharpness; lower = more differentiation
-
-    Returns
-    -------
-    list of float — per-CSCA bandwidth in Hz, summing to total_bw
-    """
-    logits = np.array(raw_logits, dtype=np.float64)
-    # Numerical stability: subtract max before exp
-    scaled = (logits - logits.max()) / max(temperature, 1e-6)
-    weights = np.exp(scaled)
-    weights = weights / (weights.sum() + 1e-12)
-    return (weights * total_bw).tolist()
 
 
 def _normalize_bw_allocation(raw_weights: list, total_bw: float,
@@ -417,9 +371,8 @@ class MultiCSCAEnvironment:
         elif self.difficulty == "medium":
             # FIX INTENT: delay must scale with system load
             _n = self.n_tasks if hasattr(self, 'n_tasks') else len(SCt["data_sizes"])
-            _load = max(1.0, _n / 5.0)
-            delay_intents   = (np.random.uniform(0.10, 0.55, _n) * _load).tolist()
-            quality_intents = np.random.uniform(0.20, 0.55, _n).tolist()
+            delay_intents   = np.random.uniform(0.50, 1.50, _n).tolist()
+            quality_intents = np.random.uniform(0.10, 0.40, _n).tolist()
             data_sizes      = (np.random.rand(self.n_tasks) * 0.4e6 + 0.1e6).tolist()
         else:  # easy
             delay_intents   = np.random.uniform(0.3, 1.0, self.n_tasks).tolist()
@@ -430,7 +383,7 @@ class MultiCSCAEnvironment:
         msg_feats = []
         for i in range(self.n_tasks):
             ds_norm = min(data_sizes[i] / 6e5, 1.0)
-            di      = delay_intents[i] / 5.0
+            di      = delay_intents[i] / 10.0
             qi      = quality_intents[i]
             urgency = (1.0 - di) * 0.5 + (1.0 - qi) * 0.5
             msg_feats.append([ds_norm, di, qi, urgency])
@@ -468,7 +421,7 @@ class MultiCSCAEnvironment:
         msg_feats = []
         for i in range(self.n_tasks):
             ds_norm = min(data_sizes[i] / 6e5, 1.0)
-            di = delay_intents[i] / 5.0
+            di = delay_intents[i] / 10.0
             qi = quality_intents[i]
             urgency = (1.0 - di) * 0.5 + (1.0 - qi) * 0.5
             msg_feats.append([ds_norm, di, qi, urgency])
@@ -498,8 +451,8 @@ class MultiCSCAEnvironment:
             "relay"      : torch.Tensor shape (1, n_cscas, n_relays)
             "mcs"        : torch.Tensor shape (1, n_cscas, n_mcs)
 
-        FIX: BW allocation now uses softmax with temperature BW_SOFTMAX_TEMP.
-        This means non-uniform HDM outputs produce non-uniform BW allocations,
+        FIX: BW allocation uses _normalize_bw_allocation with per-task floor.
+        Non-uniform HDM outputs produce non-uniform BW allocations,
         giving the policy a real gradient to learn task prioritisation.
 
         Returns dict with:
@@ -693,7 +646,7 @@ class HighPressureEnvironment(MultiCSCAEnvironment):
         data_sizes = []
 
         for i in range(self.n_tasks):
-            task_type = i % 3
+            task_type = int(np.random.choice([0, 1, 2]))
             if task_type == 0:
                 # URGENT: 3-5MB data, 0.4-0.6s intent, needs ~50%+ BW
                 delay_intents.append(float(np.random.uniform(0.4, 0.6)))
@@ -713,7 +666,7 @@ class HighPressureEnvironment(MultiCSCAEnvironment):
         msg_feats = []
         for i in range(self.n_tasks):
             ds_norm = min(data_sizes[i] / 6e5, 1.0)
-            di = delay_intents[i] / 5.0
+            di = delay_intents[i] / 10.0
             qi = quality_intents[i]
             urgency = (1.0 - di) * 0.5 + (1.0 - qi) * 0.5
             msg_feats.append([ds_norm, di, qi, urgency])

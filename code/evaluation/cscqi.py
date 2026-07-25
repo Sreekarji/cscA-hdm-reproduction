@@ -154,32 +154,6 @@ def is_intent_satisfied(
     return tau_S <= tau_S_int and vartheta_S <= vartheta_S_int
 
 
-def adjust_intent(
-    delay_intent: float,
-    quality_intent: float,
-    tau_w: float = 0.0,
-    omega1: float = 0.05,
-    omega2: float = 0.02,
-) -> tuple:
-    """
-    Intent adjustment under high-traffic scenarios (Eq. 19-20).
-    When traffic load is high, intents are relaxed to avoid message failure.
-    """
-    import math
-    
-    # Eq. 19: relax delay intent (increase allowed delay)
-    adjusted_delay = delay_intent * math.exp(omega1 * tau_w)
-    
-    # Eq. 20: relax quality intent (decrease quality requirement)
-    adjusted_quality = quality_intent * math.exp(-omega2 * tau_w)
-    
-    # Clamp to reasonable ranges
-    adjusted_delay = min(adjusted_delay, 10.0)  # Max 10 seconds
-    adjusted_quality = max(adjusted_quality, 0.5)  # Min 50% quality
-    
-    return adjusted_delay, adjusted_quality
-
-
 # =============================================================================
 # QUICK TEST
 # =============================================================================

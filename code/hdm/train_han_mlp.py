@@ -95,7 +95,7 @@ def sample_eval_state(env):
     n = env.n_tasks
     for i in range(n):
         ds_norm = min(state["SCt"]["data_sizes"][i] / 6e5, 1.0)
-        di = state["SCt"]["delay_intents"][i]
+        di = state["SCt"]["delay_intents"][i] / 10.0
         qi = state["SCt"]["quality_intents"][i]
         urgency = (1.0 - di) * 0.5 + qi * 0.5
         state["SCt"]["message_features"][i] = [ds_norm, di, qi, urgency]
@@ -106,7 +106,9 @@ def intents_from_state(state):
     """Intent vectors the HAN sees = the intents the env scores."""
     d = np.array(state["SCt"]["delay_intents"])
     q = np.array(state["SCt"]["quality_intents"])
-    urgency = 1.0 - np.clip((d - 0.05) / (0.60 - 0.05), 0, 1)
+    d_arr = np.array(d)
+    d_range = d_arr.max() - d_arr.min() + 1e-8
+    urgency = 1.0 - (d_arr - d_arr.min()) / d_range
     return np.stack([urgency, q], axis=1).tolist()
 
 

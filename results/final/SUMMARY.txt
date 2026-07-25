@@ -1,56 +1,56 @@
 ============================================================
 CSCA-SemCom Final Results
 Policy: DDPM
-Generated: 2026-07-25 10:54:11
+Generated: 2026-07-25 13:50:47
 ============================================================
 
 --- tpc=1 (5 tasks) ---
-  HDM        ISR=0.3900 +/- 0.1977  delay=0.203s  dist=0.5672 <-- HDM
-  AC         ISR=0.4930 +/- 0.2029  delay=0.089s  dist=0.6055
-  PPO        ISR=0.4050 +/- 0.1923  delay=0.037s  dist=0.6565
-  SAC        ISR=0.4410 +/- 0.2023  delay=0.128s  dist=0.6033
-  Static     ISR=0.3180 +/- 0.2090  delay=0.419s  dist=0.4440 <-- baseline
-  HDM vs Static: +22.6%
-  HDM vs best RL baseline: -20.9%
+  HDM        ISR=0.7200 +/- 0.1833  delay=0.488s  dist=0.5034 <-- HDM
+  AC         ISR=0.5450 +/- 0.1918  delay=0.074s  dist=0.6240
+  PPO        ISR=0.7050 +/- 0.1999  delay=0.235s  dist=0.5560
+  SAC        ISR=0.4320 +/- 0.1816  delay=0.207s  dist=0.6822
+  Static     ISR=0.7840 +/- 0.1689  delay=0.389s  dist=0.5259 <-- baseline
+  HDM vs Static: -8.2%
+  HDM vs best RL baseline: +2.1%
 
 --- tpc=2 (10 tasks) ---
-  HDM        ISR=0.5310 +/- 0.1294  delay=0.215s  dist=0.5741 <-- HDM
-  AC         ISR=0.4170 +/- 0.1527  delay=0.105s  dist=0.6543
-  PPO        ISR=0.5175 +/- 0.1306  delay=0.186s  dist=0.5944
-  SAC        ISR=0.3430 +/- 0.1373  delay=0.249s  dist=0.6694
-  Static     ISR=0.3115 +/- 0.1517  delay=0.863s  dist=0.4459 <-- baseline
-  HDM vs Static: +70.5%
-  HDM vs best RL baseline: +2.6%
+  HDM        ISR=0.5770 +/- 0.1355  delay=0.244s  dist=0.6017 <-- HDM
+  AC         ISR=0.5820 +/- 0.1352  delay=0.171s  dist=0.6028
+  PPO        ISR=0.5680 +/- 0.1322  delay=0.179s  dist=0.6178
+  SAC        ISR=0.4310 +/- 0.1426  delay=0.305s  dist=0.6789
+  Static     ISR=0.5975 +/- 0.1544  delay=0.803s  dist=0.5208 <-- baseline
+  HDM vs Static: -3.4%
+  HDM vs best RL baseline: -0.9%
 
 --- tpc=4 (20 tasks) ---
-  HDM        ISR=0.4900 +/- 0.0987  delay=0.564s  dist=0.5839 <-- HDM
-  AC         ISR=0.3862 +/- 0.1007  delay=0.201s  dist=0.6736
-  PPO        ISR=0.4643 +/- 0.0917  delay=0.273s  dist=0.6250
-  SAC        ISR=0.2988 +/- 0.0892  delay=0.903s  dist=0.6692
-  Static     ISR=0.2958 +/- 0.1002  delay=1.755s  dist=0.4376 <-- baseline
-  HDM vs Static: +65.7%
-  HDM vs best RL baseline: +5.5%
+  HDM        ISR=0.4070 +/- 0.1005  delay=0.804s  dist=0.6164 <-- HDM
+  AC         ISR=0.4383 +/- 0.1001  delay=0.199s  dist=0.6831
+  PPO        ISR=0.4292 +/- 0.0885  delay=0.210s  dist=0.6833
+  SAC        ISR=0.5823 +/- 0.1002  delay=0.368s  dist=0.6087
+  Static     ISR=0.2037 +/- 0.0893  delay=1.633s  dist=0.5137 <-- baseline
+  HDM vs Static: +99.8%
+  HDM vs best RL baseline: -30.1%
 
 --- tpc=10 (50 tasks) ---
-  HDM        ISR=0.4284 +/- 0.0632  delay=1.778s  dist=0.5895 <-- HDM
-  AC         ISR=0.2892 +/- 0.0597  delay=4.416s  dist=0.4369
-  PPO        ISR=0.5228 +/- 0.0599  delay=0.954s  dist=0.5906
-  SAC        ISR=0.2915 +/- 0.0564  delay=2.313s  dist=0.6735
-  Static     ISR=0.2913 +/- 0.0598  delay=4.405s  dist=0.4397 <-- baseline
-  HDM vs Static: +47.1%
-  HDM vs best RL baseline: -18.1%
+  HDM        ISR=0.3126 +/- 0.0586  delay=1.597s  dist=0.6214 <-- HDM
+  AC         ISR=0.0023 +/- 0.0075  delay=4.116s  dist=0.5142
+  PPO        ISR=0.4369 +/- 0.0617  delay=0.539s  dist=0.6841
+  SAC        ISR=0.4248 +/- 0.0591  delay=0.537s  dist=0.6828
+  Static     ISR=0.0042 +/- 0.0089  delay=4.110s  dist=0.5151 <-- baseline
+  HDM vs Static: +7342.9%
+  HDM vs best RL baseline: -28.5%
 
 ============================================================
-HDM improvement over Static at tpc=4: +65.7%
-HDM improvement over best RL baseline at tpc=4: +5.5%
+HDM improvement over Static at tpc=4: +99.8%
+HDM improvement over best RL baseline at tpc=4: -30.1%
 ============================================================
 
 ============================================================
 HAN Architecture Ablation (Fig 13a equivalent)
-Generated: 2026-07-25 11:26:29
+Generated: 2026-07-25 13:59:40
 tpc=4, 200 eval episodes, policy=ddpm, seed=42
 ============================================================
-  HAN+DDPM (HDM):              ISR=0.4917 +/- 0.0971  delay=0.557s
-  MLPEncoder+DDPM (ablation):  ISR=0.3912 +/- 0.1001  delay=0.949s
-  HAN advantage: +25.7%
-  Verdict: HAN graph attention adds meaningful benefit. Architecture justified.
+  HAN+DDPM (HDM):              ISR=0.3990 +/- 0.0995  delay=0.802s
+  MLPEncoder+DDPM (ablation):  ISR=0.3945 +/- 0.1088  delay=0.919s
+  HAN advantage: +1.1%
+  Verdict: HAN marginally better than flat MLP. Advantage within noise band.

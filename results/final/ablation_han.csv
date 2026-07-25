@@ -1,4 +1,4 @@
 encoder,isr_mean,isr_std,delay_mean,dist_mean,n_eval,tpc
-HAN (graph attention),0.4917,0.0971,0.5570,0.5889,200,4
-"MLPEncoder (flat, no attention)",0.3912,0.1001,0.9488,0.5604,200,4
-HAN_advantage_%,25.69,,,,,
+HAN (graph attention),0.3990,0.0995,0.8022,0.6243,200,4
+"MLPEncoder (flat, no attention)",0.3945,0.1088,0.9191,0.5980,200,4
+HAN_advantage_%,1.14,,,,,

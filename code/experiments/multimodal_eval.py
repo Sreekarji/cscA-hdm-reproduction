@@ -280,8 +280,9 @@ def evaluate_text(sentences, snr_range):
             "similarity_mean":  float(sims.mean()),
             "similarity_std":   float(sims.std()),
             "accuracy_rate":    acc,
-            "compression_mean": float(np.mean(compression_ratios)),
-            "compression_std":  float(np.std(compression_ratios)),
+            "compression_mean": COMPRESSION_ETA,
+            "compression_std":  0.0,
+            "compression_note": "fixed word-truncation proxy (eta=0.73); not a measured ratio",
             "delay_mean":       snr_metrics[snr_db]["delay_mean"],
             "distortion_mean":  snr_metrics[snr_db]["distortion_mean"],
             "n":                len(sentences),
@@ -346,11 +347,9 @@ def evaluate_audio(audio_files, snr_range):
             "similarity_mean":  float(sims.mean()),
             "similarity_std":   float(sims.std()),
             "accuracy_rate":    acc,
-            "compression_mean": float(np.mean([
-                compression_ratio_bits(os.path.getsize(fp), len(c.split()))
-                for fp, c in zip(audio_files[:len(transcripts)], compressed)
-            ])),
-            "compression_std":  0.0,
+            "compression_mean": float(np.mean(compression_ratios)),
+            "compression_std":  float(np.std(compression_ratios)),
+            "compression_note": "word-truncation ratio of transcribed text",
             "delay_mean":       snr_metrics[snr_db]["delay_mean"],
             "distortion_mean":  snr_metrics[snr_db]["distortion_mean"],
             "n":                len(transcripts),
@@ -438,11 +437,9 @@ def evaluate_image(image_files, snr_range):
             "similarity_mean":  float(sims.mean()),
             "similarity_std":   float(sims.std()),
             "accuracy_rate":    acc,
-            "compression_mean": float(np.mean([
-                compression_ratio_bits(os.path.getsize(fp), len(c.split()))
-                for fp, c in zip(image_files[:len(captions)], compressed)
-            ])),
-            "compression_std":  0.0,
+            "compression_mean": float(np.mean(compression_ratios)),
+            "compression_std":  float(np.std(compression_ratios)),
+            "compression_note": "word-truncation ratio of BLIP-2 captions",
             "delay_mean":       snr_metrics[snr_db]["delay_mean"],
             "distortion_mean":  snr_metrics[snr_db]["distortion_mean"],
             "n":                len(captions),
@@ -480,7 +477,7 @@ def generate_fig6(text_results, audio_results, image_results):
                          markersize=6, capsize=3)
     ax1.set_xlabel("SNR (dB)")
     ax1.set_ylabel("Semantic Similarity")
-    ax1.set_title("Fig 6a: Semantic Accuracy vs SNR")
+    ax1.set_title("Fig 6a: Semantic Similarity vs SNR\n(calibrated proxy — not measured channel)")
     ax1.set_ylim(0, 1.1)
     ax1.grid(alpha=0.3)
     ax1.legend()
@@ -505,7 +502,7 @@ def generate_fig6(text_results, audio_results, image_results):
         ax2.axhline(tgt, color=col, linestyle="--", alpha=0.6,
                     label=f"{name} target={tgt}")
     ax2.set_ylabel("Compression Ratio")
-    ax2.set_title("Fig 6b: Compression Ratio per Modality")
+    ax2.set_title("Fig 6b: Compression Ratio\n(text: fixed eta=0.73 proxy; audio/image: measured)")
     ax2.legend(fontsize=8)
     ax2.set_ylim(0, 1.1)
 
