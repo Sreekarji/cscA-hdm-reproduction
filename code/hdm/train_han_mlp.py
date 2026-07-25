@@ -181,7 +181,7 @@ class HANMLPTrainer:
         ).to(self.device)
 
         # Three separate optimisers — HAN updated ONLY through actor path
-        actor_lr = 1e-4 if POLICY == "ddpm" else 3e-4
+        actor_lr = 5e-4 if self.n_tasks >= 40 else (1e-4 if POLICY == "ddpm" else 3e-4)
         self.opt_han    = optim.Adam(self.han.parameters(),    lr=1e-4)
         self.opt_actor  = optim.Adam(self.actor.parameters(),  lr=actor_lr)
         self.opt_critic = optim.Adam(self.critic.parameters(), lr=3e-4)
@@ -218,6 +218,8 @@ class HANMLPTrainer:
 
         self.episode = 0
         self.best_isr = 0.0
+        self.patience = 150
+        self.no_improve_count = 0
         self.history = []
         self._ckpt_suffix = ""
 
@@ -376,6 +378,7 @@ class HANMLPTrainer:
                 eval_isr = float(np.mean(eval_isrs))
                 if eval_isr > self.best_isr:
                     self.best_isr = eval_isr
+                    self.no_improve_count = 0
                     torch.save({
                         "han":        self.han.state_dict(),
                         "actor":      self.actor.state_dict(),
@@ -388,6 +391,11 @@ class HANMLPTrainer:
                     }, os.path.join(CHECKPOINT_DIR,
                                     f"han_{POLICY}_tpc{self.tasks_per_csca}{self._ckpt_suffix}_best.pt"))
                     log(f"  -> Best eval ISR: {eval_isr:.3f} (ep {ep})")
+                else:
+                    self.no_improve_count += 1
+                    if self.no_improve_count >= self.patience:
+                        log(f"  [early stop] No improvement for {self.patience} eval intervals. Stopping at ep {ep}.")
+                        break
 
         return self.best_isr
 
