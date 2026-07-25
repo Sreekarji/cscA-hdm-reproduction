@@ -20,7 +20,7 @@ for sub in ["", "code/hdm", "code/channel", "code/evaluation", "code/utils"]:
         sys.path.insert(0, p)
 
 from reproducibility import set_seed
-from sim_channel import MultiCSCAEnvironment, _softmax_bw_allocation
+from sim_channel import MultiCSCAEnvironment, _normalize_bw_allocation
 from han_network import HANNetwork
 from ddpm_policy import DDPMActor
 
@@ -73,7 +73,7 @@ def main():
 
     print("\n== 4. Per-task BW allocation (not collapsed to uniform) ==")
     logits = torch.randn(1, env.n_tasks)
-    bw     = _softmax_bw_allocation(
+    bw     = _normalize_bw_allocation(
         [logits[0, i].item() for i in range(env.n_tasks)], 5e6)
     bw     = np.array(bw)
     print("  bw shares:", np.round(bw / bw.sum(), 3))
