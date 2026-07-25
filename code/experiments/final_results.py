@@ -129,7 +129,7 @@ def run_ablation_N():
         trainer.actor = DDPMActor(
             graph_emb_dim=256, task_emb_dim=256,
             action_dim=trainer.action_dim, hidden_dim=256,
-            n_tasks=trainer.n_tasks, n_mcs=trainer.n_mcs,
+            n_tasks=trainer.n_tasks, n_relays=trainer.n_relays, n_mcs=trainer.n_mcs,
             n_denoising_steps=N,
         ).to(DEVICE)
         trainer.opt_actor = torch.optim.Adam(

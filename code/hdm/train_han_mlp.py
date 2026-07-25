@@ -117,9 +117,7 @@ def parse_action(action, n_tasks, n_relays, n_mcs):
     Layout: [BW: n_tasks | relay: n_tasks*n_relays | MCS: n_tasks*n_mcs]
     """
     bw    = action[:, :n_tasks]
-    relay = torch.sigmoid(
-        action[:, n_tasks: n_tasks + n_tasks * n_relays]
-    ).reshape(1, n_tasks, n_relays)
+    relay = action[:, n_tasks: n_tasks + n_tasks * n_relays].reshape(1, n_tasks, n_relays)
     mcs   = action[:, n_tasks + n_tasks * n_relays:].reshape(1, n_tasks, n_mcs)
     return {"bandwidth": bw, "relay": relay, "mcs": mcs}
 
@@ -464,7 +462,7 @@ def evaluate_static(env, n_tasks, n_relays, n_mcs, n_episodes: int = 200):
 
             rsrp = env.channel.compute_rsrp(tx_power, distance, los=False)
             interferer_powers = []
-            for _ in range(INTERFERENCE_CELLS):
+            for _j in range(INTERFERENCE_CELLS):
                 d_int = np.random.uniform(INTERFERER_DISTANCE_MIN_KM,
                                           INTERFERER_DISTANCE_MAX_KM)
                 interferer_powers.append(
