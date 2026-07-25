@@ -1,12 +1,11 @@
-"""Plumbing sanity check - run this FIRST.
+"""Plumbing sanity check — run this FIRST.
 
 Verifies:
   1. CSCA features vary across nodes
   2. HAN shapes correct for multiple tpc
-  3. Denoiser gradient flows correctly (non-zero grad on denoiser params)
+  3. DDPMActor gradient flows correctly (non-zero grad on denoiser params)
   4. Per-task BW not collapsed
-  5. log_prob is negative and finite
-  6. mu_list / a_list pairing is correct (NEW)
+  5. Action shape and BW simplex constraint
 Run: python check_features.py
 """
 import os
@@ -23,7 +22,8 @@ for sub in ["", "code/hdm", "code/channel", "code/evaluation", "code/utils"]:
 from reproducibility import set_seed
 from sim_channel import MultiCSCAEnvironment, _softmax_bw_allocation
 from han_network import HANNetwork
-from ddpm_policy import HDMPolicy
+from ddpm_policy import DDPMActor
+
 
 def main():
     set_seed(42)
@@ -47,24 +47,29 @@ def main():
         print(f"  tpc={tpc:2d} Nm={e.n_tasks:3d}  "
               f"graph_emb={tuple(g.shape)}  message_embs={tuple(memb.shape)}")
 
-    print("\n== 3. Denoiser gradient (should be > 0 on ALL denoiser params) ==")
-    policy  = HDMPolicy(5, 3, 256).to(device)
-    _, _, memb = han.encode_state(
-        state, [[m[1], m[2]] for m in state["SCt"]["message_features"]])
-    action, log_prob = policy.collect_trajectory(memb, congestion_idx=1)
+    print("\n== 3. DDPMActor gradient (denoiser params should get > 0 grad) ==")
+    n_tasks = env.n_tasks   # 10 tasks (tpc=2)
+    n_mcs   = env.n_mcs     # 3
+    actor   = DDPMActor(
+        graph_emb_dim=256, task_emb_dim=256,
+        action_dim=n_tasks + n_tasks * n_mcs,
+        n_tasks=n_tasks, n_mcs=n_mcs, n_denoising_steps=6,
+    ).to(device)
 
-    lp_sum = log_prob.sum()
-    lp_sum.backward()
+    intents = [[m[1], m[2]] for m in state["SCt"]["message_features"]]
+    graph_emb, _, msg_embs = han.encode_state(state, intents)
+    action = actor(graph_emb, message_embs=msg_embs)
+    loss = -action.sum()
+    loss.backward()
 
     gnorm = sum(
         p.grad.norm().item()
-        for p in policy.denoiser.parameters()
+        for p in actor.denoiser.parameters()
         if p.grad is not None
     )
-    print(f"  log_prob shape={tuple(log_prob.shape)} "
-          f"values={log_prob.detach().numpy().round(3)}")
+    print(f"  action shape={tuple(action.shape)}")
     print(f"  denoiser grad-norm={gnorm:.6f}  (MUST be > 0)")
-    assert gnorm > 0, "GRADIENT IS ZERO - bug in collect_trajectory!"
+    assert gnorm > 0, "GRADIENT IS ZERO — bug in DDPMActor backward!"
 
     print("\n== 4. Per-task BW allocation (not collapsed to uniform) ==")
     logits = torch.randn(1, env.n_tasks)
@@ -74,12 +79,14 @@ def main():
     print("  bw shares:", np.round(bw / bw.sum(), 3))
     print("  bw std/mean:", round(bw.std() / bw.mean(), 3), "  (should be > 0)")
 
-    print("\n== 5. log_prob finite and negative ==")
-    assert torch.isfinite(log_prob).all(), "log_prob contains NaN/Inf!"
-    assert (log_prob < 0).all(), "log_prob should be negative!"
-    print("  log_prob OK:", log_prob.detach().numpy().round(3))
+    print("\n== 5. Action shape and BW simplex ==")
+    bw_slice = action[0, :n_tasks]
+    print(f"  action shape: {tuple(action.shape)}  (expected (1, {n_tasks + n_tasks*n_mcs}))")
+    print(f"  BW sum: {bw_slice.sum().item():.6f}  (should be ~1.0)")
+    assert abs(bw_slice.sum().item() - 1.0) < 0.01, "BW does not sum to 1!"
 
     print("\nAll checks PASSED.")
+
 
 if __name__ == "__main__":
     main()

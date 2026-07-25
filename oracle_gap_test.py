@@ -15,6 +15,7 @@ for sub in ["", "code/hdm", "code/channel", "code/evaluation", "code/utils"]:
 
 from sim_channel import MultiCSCAEnvironment
 from cscqi import compute_isr
+from train_han_mlp import sample_eval_state
 
 N_STATES        = 100
 N_ORACLE_SAMPLES = 64
@@ -38,7 +39,7 @@ def main():
         for s in range(N_STATES):
             np.random.seed(1000 + s)
             env   = MultiCSCAEnvironment(difficulty="medium", tasks_per_csca=tpc)
-            state = env.generate_state()
+            state = sample_eval_state(env)
             n     = env.n_tasks
 
             st  = copy.deepcopy(state)

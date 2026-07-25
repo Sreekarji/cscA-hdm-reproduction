@@ -1,0 +1,4 @@
+loss_variant,isr_mean,isr_std,delay_mean,dist_mean,delta_vs_baseline,pct_vs_baseline,n_eval,tpc,lambda_pi
+baseline_Q_only,0.3822,0.0964,,,0.0,0.0,200,4,N/A
+logpi_lambda0.01,0.3610,0.0972,0.7837,0.1510,-0.0212,-5.5,200,4,0.01
+recommendation,REVERT: -Q.mean() is stronger. Defend as DPG-stable variant.,,,,,,,,

@@ -28,6 +28,7 @@ Run: python code/hdm/train_han_mlp.py
 
 import os
 import sys
+import copy
 import random
 import torch
 import torch.nn as nn
@@ -38,11 +39,10 @@ from datetime import datetime
 # ---------------------------------------------------------------------------
 # Path setup
 # ---------------------------------------------------------------------------
-sys.path.insert(0, r"D:\MP2\code\channel")
-sys.path.insert(0, r"D:\MP2\code\evaluation")
-sys.path.insert(0, r"D:\MP2\code\hdm")
-sys.path.insert(0, r"D:\MP2\code\utils")
-sys.path.insert(0, r"D:\MP2\code\experiments")
+_CODE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _sub in ("channel", "evaluation", "hdm", "utils", "experiments"):
+    sys.path.insert(0, os.path.join(_CODE_ROOT, _sub))
+sys.path.insert(0, _CODE_ROOT)
 
 from mlp_policy import MLPActor, MLPCritic
 from ddpm_policy import DDPMActor
@@ -50,9 +50,10 @@ from han_network import HANNetwork
 from sim_channel import MultiCSCAEnvironment
 from cscqi import compute_cscqi, compute_isr
 from reproducibility import set_seed
+from config import MP2_ROOT, CHECKPOINT_PATH
 
-LOG_PATH = r"D:\MP2\log.txt"
-CHECKPOINT_PATH = r"D:\MP2\results\checkpoints"
+LOG_PATH = str(MP2_ROOT / "log.txt")
+CHECKPOINT_PATH = str(CHECKPOINT_PATH)
 os.makedirs(CHECKPOINT_PATH, exist_ok=True)
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -70,11 +71,20 @@ def _act(actor, ge, me, deterministic=False):
 # ---------------------------------------------------------------------------
 
 def log(msg):
+    """Write timestamped message to stdout and log file."""
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{ts}] {msg}"
     print(line)
     with open(LOG_PATH, "a") as f:
         f.write(line + "\n")
+
+
+def _task_metrics(tasks):
+    """Return (isr, mean_delay, mean_distortion) for a task list."""
+    isr   = compute_isr(tasks)
+    delay = float(np.mean([t["tau_S"]      for t in tasks]))
+    dist  = float(np.mean([t["vartheta_S"] for t in tasks]))
+    return isr, delay, dist
 
 
 def sample_eval_state(env):
@@ -186,8 +196,14 @@ class HANMLPTrainer:
 
         # FIX 17a: Replay buffer for critic
         self.replay = []
-        self.replay_cap = 2000
-        self.critic_batch = 128   # 200-dim action needs more samples per Q-update
+        self.replay_cap = 10000
+        self.critic_batch = 256
+        self.critic_updates_per_step = 2
+        self.critic_target = copy.deepcopy(self.critic).to(self.device)
+        for _p in self.critic_target.parameters():
+            _p.requires_grad = False
+        self.tau_polyak = 0.005
+        self.actor_update_every = 2
 
         # FIX 17c: LR decay for actor and HAN
         self.sched_han   = optim.lr_scheduler.StepLR(self.opt_han,   step_size=300, gamma=0.7)
@@ -196,6 +212,7 @@ class HANMLPTrainer:
         self.episode = 0
         self.best_isr = 0.0
         self.history = []
+        self._ckpt_suffix = ""
 
     # ------------------------------------------------------------------
     def train_step(self):
@@ -203,6 +220,9 @@ class HANMLPTrainer:
         self.actor.train()
         self.critic.train()
         self.episode += 1
+        if hasattr(self.actor, "temp_scale"):
+            frac = min(1.0, self.episode / 1000.0)
+            self.actor.temp_scale.fill_(2.0 + (0.5 - 2.0) * frac)
 
         state = sample_eval_state(self.env)
         intent_vectors = intents_from_state(state)
@@ -218,12 +238,14 @@ class HANMLPTrainer:
             sigma = max(0.02, 0.10 * (1.0 - self.episode / 1000))
         else:
             sigma = max(0.02, 0.2 * (1.0 - self.episode / 1000))
-        noise = torch.randn_like(action) * sigma
-        action = (action + noise).clamp(0.0, 1.0)
-        # Re-project BW segment onto simplex
-        bw = action[:, :self.n_tasks].clamp_min(1e-4)
-        bw = bw / bw.sum(dim=-1, keepdim=True)
-        action = torch.cat([bw, action[:, self.n_tasks:]], dim=-1)
+        # FIX B (cont.): perturb in logit space so exploration actually
+        # explores different allocations rather than collapsing to uniform.
+        bw_logits = torch.log(action[:, :self.n_tasks].clamp_min(1e-8))
+        bw_logits = bw_logits + torch.randn_like(bw_logits) * sigma * 3.0
+        bw = torch.softmax(bw_logits, dim=-1)
+        mcs = (action[:, self.n_tasks:]
+               + torch.randn_like(action[:, self.n_tasks:]) * sigma).clamp(0.0, 1.0)
+        action = torch.cat([bw, mcs], dim=-1)
 
         # ---- Environment step ----
         result = self.env.step(
@@ -263,51 +285,51 @@ class HANMLPTrainer:
             a_mb = action.detach()
             r_mb = torch.tensor([[reward]], dtype=torch.float, device=self.device)
 
-        value_pred = self.critic(g_mb, a_mb)
-        critic_loss = nn.MSELoss()(value_pred, r_mb)
+        critic_loss_val = 0.0
+        for _u in range(self.critic_updates_per_step):
+            if _u > 0 and len(self.replay) >= self.critic_batch:
+                _b = random.sample(self.replay, self.critic_batch)
+                g_mb = torch.cat([b[0] for b in _b], dim=0)
+                a_mb = torch.cat([b[1] for b in _b], dim=0)
+                r_mb = torch.tensor([[b[2]] for b in _b],
+                                    dtype=torch.float, device=self.device)
+            value_pred = self.critic(g_mb, a_mb)
+            critic_loss = nn.MSELoss()(value_pred, r_mb)
+            self.opt_critic.zero_grad()
+            critic_loss.backward()
+            nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
+            self.opt_critic.step()
+            critic_loss_val = critic_loss.item()
+
+        # ---- Actor + HAN update (delayed) ----
+        if self.episode % self.actor_update_every == 0:
+            graph_emb2, _, msg_embs2 = self.han.encode_state(
+                state, intent_vectors=intent_vectors
+            )
+            action2 = self.actor(graph_emb2, message_embs=msg_embs2)
+            q_value = self.critic_target(graph_emb2, action2)
+            actor_loss = -q_value.mean()
+            self.opt_han.zero_grad()
+            self.opt_actor.zero_grad()
+            actor_loss.backward()
+            nn.utils.clip_grad_norm_(self.han.parameters(),   self.max_grad_norm)
+            nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+            self.opt_han.step()
+            self.opt_actor.step()
+            self.sched_han.step()
+            self.sched_actor.step()
+            a_loss_val = actor_loss.item()
+        else:
+            a_loss_val = 0.0
         self.opt_critic.zero_grad()
-        critic_loss.backward()
-        nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
-        self.opt_critic.step()
 
-        # ---- Actor + HAN update ----
-        # FIX 12a: second forward pass — graph_emb2 is NOT detached before critic,
-        #          so gradient flows: critic(graph_emb2, action2) → action2 → actor
-        #          → msg_embs2 → han  (HAN finally learns!)
-        graph_emb2, _, msg_embs2 = self.han.encode_state(
-            state, intent_vectors=intent_vectors
-        )
-        action2 = self.actor(graph_emb2, message_embs=msg_embs2)
+        # ---- Polyak averaging for target critic ----
+        with torch.no_grad():
+            for _p, _pt in zip(self.critic.parameters(),
+                               self.critic_target.parameters()):
+                _pt.data.mul_(1.0 - self.tau_polyak).add_(self.tau_polyak * _p.data)
 
-        # FIX 12b: actor loss = -Q(s, π(s))  (maximise Q directly)
-        #          No broken advantage multiplication — advantage is used only for
-        #          variance reduction via EMA baseline subtraction in the reward.
-        q_value = self.critic(graph_emb2, action2)   # graph_emb2 NOT detached here
-
-        # EMA-normalised reward as auxiliary advantage baseline
-        self._ema_reward = (
-            (1 - self._ema_alpha) * self._ema_reward
-            + self._ema_alpha * reward
-        )
-        # Simple policy-gradient: push actor toward higher Q
-        actor_loss = -q_value.mean()
-
-        self.opt_han.zero_grad()
-        self.opt_actor.zero_grad()
-        actor_loss.backward()
-        nn.utils.clip_grad_norm_(self.han.parameters(),   self.max_grad_norm)
-        nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
-        self.opt_han.step()
-        self.opt_actor.step()
-        # FIX 15: zero critic grads after actor backward to prevent contamination
-        self.opt_critic.zero_grad()
-
-        # FIX 17c: LR decay
-        self.sched_han.step()
-        self.sched_actor.step()
-
-        c_loss_val = critic_loss.item()
-        a_loss_val = actor_loss.item()
+        c_loss_val = critic_loss_val
         if not (np.isfinite(c_loss_val) and np.isfinite(a_loss_val)):
             self.opt_han.zero_grad()
             self.opt_actor.zero_grad()
@@ -357,7 +379,7 @@ class HANMLPTrainer:
                         "isr":        eval_isr,
                         "episode":    ep,
                     }, os.path.join(CHECKPOINT_PATH,
-                                    f"han_{POLICY}_tpc{self.tasks_per_csca}_best.pt"))
+                                    f"han_{POLICY}_tpc{self.tasks_per_csca}{self._ckpt_suffix}_best.pt"))
                     log(f"  -> Best eval ISR: {eval_isr:.3f} (ep {ep})")
 
         return self.best_isr
@@ -367,11 +389,11 @@ class HANMLPTrainer:
 # Evaluation helpers
 # ---------------------------------------------------------------------------
 
-def evaluate_policy(trainer, n_episodes: int = 200) -> tuple[float, float]:
+def evaluate_policy(trainer, n_episodes: int = 200):
     """Evaluate the trained HAN+MLP policy."""
     trainer.han.eval()
     trainer.actor.eval()
-    isrs = []
+    isrs, delays, dists = [], [], []
 
     with torch.no_grad():
         for _ in range(n_episodes):
@@ -385,16 +407,20 @@ def evaluate_policy(trainer, n_episodes: int = 200) -> tuple[float, float]:
                 parse_action(action, trainer.n_tasks, trainer.n_relays, trainer.n_mcs),
                 state,
             )
-            isrs.append(compute_isr(result["tasks"]))
+            isr, delay, dist = _task_metrics(result["tasks"])
+            isrs.append(isr)
+            delays.append(delay)
+            dists.append(dist)
 
     trainer.han.train()
     trainer.actor.train()
-    return float(np.mean(isrs)), float(np.std(isrs))
+    return (float(np.mean(isrs)), float(np.std(isrs)),
+            float(np.mean(delays)), float(np.mean(dists)))
 
 
-def evaluate_static(env, n_tasks, n_relays, n_mcs, n_episodes: int = 200) -> tuple[float, float]:
+def evaluate_static(env, n_tasks, n_relays, n_mcs, n_episodes: int = 200):
     """Evaluate uniform (static) baseline."""
-    isrs = []
+    isrs, delays, dists = [], [], []
     for _ in range(n_episodes):
         state = sample_eval_state(env)
         action = {
@@ -403,16 +429,20 @@ def evaluate_static(env, n_tasks, n_relays, n_mcs, n_episodes: int = 200) -> tup
             "mcs":       torch.full((1, n_tasks, n_mcs), 1.0 / n_mcs, device=DEVICE),
         }
         result = env.step(action, state)
-        isrs.append(compute_isr(result["tasks"]))
-    return float(np.mean(isrs)), float(np.std(isrs))
+        isr, delay, dist = _task_metrics(result["tasks"])
+        isrs.append(isr)
+        delays.append(delay)
+        dists.append(dist)
+    return (float(np.mean(isrs)), float(np.std(isrs)),
+            float(np.mean(delays)), float(np.mean(dists)))
 
 
 def evaluate_baseline_actor(actor, han, env, n_tasks, n_relays, n_mcs,
-                             n_episodes: int = 200) -> tuple[float, float]:
+                             n_episodes: int = 200):
     """Evaluate a baseline RL actor — same state distribution as HDM."""
     actor.eval()
     han.eval()
-    isrs = []
+    isrs, delays, dists = [], [], []
 
     with torch.no_grad():
         for _ in range(n_episodes):
@@ -425,11 +455,15 @@ def evaluate_baseline_actor(actor, han, env, n_tasks, n_relays, n_mcs,
             result = env.step(
                 parse_action(action, n_tasks, n_relays, n_mcs), state
             )
-            isrs.append(compute_isr(result["tasks"]))
+            isr, delay, dist = _task_metrics(result["tasks"])
+            isrs.append(isr)
+            delays.append(delay)
+            dists.append(dist)
 
     actor.train()
     han.train()
-    return float(np.mean(isrs)), float(np.std(isrs))
+    return (float(np.mean(isrs)), float(np.std(isrs)),
+            float(np.mean(delays)), float(np.mean(dists)))
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +473,9 @@ def evaluate_baseline_actor(actor, han, env, n_tasks, n_relays, n_mcs,
 class PerTaskGaussianActor(nn.Module):
     """Gaussian policy with the SAME input interface as the HDM actor:
     per-task BW head on message_embs + global MCS head on graph_emb."""
+    LOG_STD_MIN = -5.0
+    LOG_STD_MAX =  0.5
+
     def __init__(self, graph_emb_dim=256, task_emb_dim=256,
                  n_tasks=20, n_mcs=3, hidden=256):
         super().__init__()
@@ -467,13 +504,13 @@ class PerTaskGaussianActor(nn.Module):
         return self._squash(raw)
 
     def _squash(self, raw):
-        bw = torch.softmax(raw[:, :self.n_tasks], dim=-1)
+        bw = torch.softmax(raw[:, :self.n_tasks].clamp(-6.0, 6.0), dim=-1)
         mcs = torch.sigmoid(raw[:, self.n_tasks:])
         return torch.cat([bw, mcs], dim=-1)
 
     def get_dist(self, graph_emb, message_embs):
         mean = self._mean(graph_emb, message_embs)
-        std = self.log_std.exp().expand_as(mean)
+        std = self.log_std.clamp(self.LOG_STD_MIN, self.LOG_STD_MAX).exp().expand_as(mean)
         return torch.distributions.Normal(mean, std)
 
 
@@ -696,9 +733,9 @@ def train_sac_baseline(
     opt_a = optim.Adam(actor.parameters(), lr=lr)
     opt_q = optim.Adam(q_critic.parameters(), lr=lr)
 
-    log_alpha = torch.tensor(0.0, device=DEVICE, requires_grad=True)
+    log_alpha = torch.tensor(-2.0, device=DEVICE, requires_grad=True)
     opt_alpha = optim.Adam([log_alpha], lr=lr)
-    target_entropy = -action_dim * 0.5
+    target_entropy = -float(action_dim)
 
     buf_g, buf_m, buf_a, buf_r = [], [], [], []
 
@@ -767,6 +804,8 @@ def train_sac_baseline(
             opt_alpha.zero_grad()
             alpha_loss.backward()
             opt_alpha.step()
+            with torch.no_grad():
+                log_alpha.clamp_(-5.0, 1.0)
 
         if ep % 100 == 0:
             print(f"  [SAC] ep {ep}/{n_episodes} reward={reward:.3f} isr={isr:.3f}")
@@ -793,8 +832,8 @@ if __name__ == "__main__":
     best_isr = trainer.train(max_episodes=1000)
 
     print("\nEvaluating HDM...")
-    hdm_mean, hdm_std = evaluate_policy(trainer, n_episodes=200)
-    print(f"HDM ISR: {hdm_mean:.4f} ± {hdm_std:.4f}  (best training: {best_isr:.4f})")
+    hdm_mean, hdm_std, hdm_delay, hdm_dist = evaluate_policy(trainer, n_episodes=200)
+    print(f"HDM ISR: {hdm_mean:.4f} ± {hdm_std:.4f}  delay={hdm_delay:.3f}s  dist={hdm_dist:.4f}  (best training: {best_isr:.4f})")
 
     # ---- Train baselines on the SAME environment ----
     eval_env = MultiCSCAEnvironment(
@@ -847,7 +886,8 @@ if __name__ == "__main__":
         eval_env, trainer.n_tasks, trainer.n_relays, trainer.n_mcs, 200
     )
 
-    for name, (mean_isr, std_isr) in results.items():
+    for name, metrics in results.items():
+        mean_isr, std_isr = metrics[0], metrics[1]
         flag = ""
         if name == "HAN+DDPM (HDM)":
             flag = "  <- HDM"

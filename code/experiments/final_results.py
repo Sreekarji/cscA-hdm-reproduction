@@ -21,8 +21,9 @@ from train_han_mlp import (
     HANMLPTrainer, evaluate_policy, evaluate_static, evaluate_baseline_actor,
     sample_eval_state, intents_from_state, parse_action, DEVICE, POLICY, CHECKPOINT_PATH,
     train_ac_baseline, train_ppo_baseline, train_sac_baseline, PerTaskGaussianActor,
-    MultiCSCAEnvironment, compute_isr, compute_cscqi,
+    MultiCSCAEnvironment, compute_isr, compute_cscqi, _task_metrics,
 )
+from ddpm_policy import DDPMActor
 
 import matplotlib
 matplotlib.use("Agg")
@@ -59,13 +60,14 @@ def run_one_tpc(tpc):
         print(f"  Loaded best checkpoint (ISR={ckpt['isr']:.3f}, ep {ckpt['episode']})")
 
     # Evaluate HDM
-    hdm_mean, hdm_std = evaluate_policy(trainer, N_EVAL)
+    hdm_mean, hdm_std, hdm_delay, hdm_dist = evaluate_policy(trainer, N_EVAL)
 
     # Create eval environment
-    eval_env = MultiCSCAEnvironment(
-        n_cscas=trainer.n_cscas, n_relays=trainer.n_relays,
-        difficulty="medium", tasks_per_csca=tpc,
-    )
+    # NEW-1: every method must be scored on the SAME network topology.
+    # csca/bs/relay positions are drawn once per environment instance and
+    # never resampled, so constructing a fresh eval_env after 1000 training
+    # episodes gave HDM and the baselines different geometries.
+    eval_env = trainer.env
 
     # Train baselines
     set_seed(42)
@@ -88,28 +90,73 @@ def run_one_tpc(tpc):
     )
 
     # Evaluate baselines
-    ac_mean, ac_std = evaluate_baseline_actor(
+    ac_mean, ac_std, ac_delay, ac_dist = evaluate_baseline_actor(
         ac_actor, trainer.han, eval_env, trainer.n_tasks, trainer.n_relays, trainer.n_mcs, N_EVAL)
-    ppo_mean, ppo_std = evaluate_baseline_actor(
+    ppo_mean, ppo_std, ppo_delay, ppo_dist = evaluate_baseline_actor(
         ppo_actor, trainer.han, eval_env, trainer.n_tasks, trainer.n_relays, trainer.n_mcs, N_EVAL)
-    sac_mean, sac_std = evaluate_baseline_actor(
+    sac_mean, sac_std, sac_delay, sac_dist = evaluate_baseline_actor(
         sac_actor, trainer.han, eval_env, trainer.n_tasks, trainer.n_relays, trainer.n_mcs, N_EVAL)
-    static_mean, static_std = evaluate_static(
+    static_mean, static_std, static_delay, static_dist = evaluate_static(
         eval_env, trainer.n_tasks, trainer.n_relays, trainer.n_mcs, N_EVAL)
 
     results = {
-        "HDM": (hdm_mean, hdm_std),
-        "AC": (ac_mean, ac_std),
-        "PPO": (ppo_mean, ppo_std),
-        "SAC": (sac_mean, sac_std),
-        "Static": (static_mean, static_std),
+        "HDM": (hdm_mean, hdm_std, hdm_delay, hdm_dist),
+        "AC": (ac_mean, ac_std, ac_delay, ac_dist),
+        "PPO": (ppo_mean, ppo_std, ppo_delay, ppo_dist),
+        "SAC": (sac_mean, sac_std, sac_delay, sac_dist),
+        "Static": (static_mean, static_std, static_delay, static_dist),
     }
 
     print(f"\n  tpc={tpc} results:")
-    for name, (m, s) in results.items():
-        print(f"    {name:<10} ISR={m:.4f} +/- {s:.4f}")
+    for name, (m, s, d, v) in results.items():
+        print(f"    {name:<10} ISR={m:.4f} +/-{s:.4f}  delay={d:.3f}s  dist={v:.4f}")
 
     return results, trainer.history
+
+
+def run_ablation_N():
+    """Fig 12a equivalent: ISR vs N denoising steps at tpc=4."""
+    print(f"\n{'='*60}")
+    print(f"N-step ablation (tpc=4, N in [5, 6, 7])")
+    print(f"{'='*60}")
+
+    ablation_results = {}
+    for N in [5, 6, 7]:
+        print(f"\n[{timestamp()}] Training N={N}...")
+        set_seed(42)
+        trainer = HANMLPTrainer(tasks_per_csca=4, difficulty="medium")
+        trainer._ckpt_suffix = f"_N{N}"
+        trainer.actor = DDPMActor(
+            graph_emb_dim=256, task_emb_dim=256,
+            action_dim=trainer.action_dim, hidden_dim=256,
+            n_tasks=trainer.n_tasks, n_mcs=trainer.n_mcs,
+            n_denoising_steps=N,
+        ).to(DEVICE)
+        trainer.opt_actor = torch.optim.Adam(
+            trainer.actor.parameters(), lr=1e-4)
+        trainer.sched_actor = torch.optim.lr_scheduler.StepLR(
+            trainer.opt_actor, step_size=300, gamma=0.7)
+        trainer.train(max_episodes=1000)
+
+        ckpt_path = os.path.join(
+            CHECKPOINT_PATH, f"han_{POLICY}_tpc4_N{N}_best.pt")
+        if os.path.exists(ckpt_path):
+            ckpt = torch.load(ckpt_path, map_location=DEVICE)
+            trainer.han.load_state_dict(ckpt["han"])
+            trainer.actor.load_state_dict(ckpt["actor"])
+
+        mean_isr, std_isr, _, _ = evaluate_policy(trainer, 200)
+        ablation_results[N] = (mean_isr, std_isr)
+        print(f"  N={N}: ISR={mean_isr:.4f} +/- {std_isr:.4f}")
+
+    ablation_path = os.path.join(RESULTS_DIR, "ablation_N.csv")
+    with open(ablation_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["N_steps", "isr_mean", "isr_std"])
+        for N, (m, s) in ablation_results.items():
+            w.writerow([N, f"{m:.4f}", f"{s:.4f}"])
+    print(f"Wrote {ablation_path}")
+    return ablation_results
 
 
 def main():
@@ -132,11 +179,11 @@ def main():
     csv_path = os.path.join(RESULTS_DIR, "isr_vs_tpc.csv")
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["tpc", "policy", "isr_mean", "isr_std", "n_eval"])
+        w.writerow(["tpc", "policy", "isr_mean", "isr_std", "delay_mean", "dist_mean", "n_eval"])
         for tpc in TGC_LIST:
             for policy in ["HDM", "AC", "PPO", "SAC", "Static"]:
-                m, s = all_results[tpc][policy]
-                w.writerow([tpc, policy, f"{m:.4f}", f"{s:.4f}", N_EVAL])
+                m, s, d, v = all_results[tpc][policy]
+                w.writerow([tpc, policy, f"{m:.4f}", f"{s:.4f}", f"{d:.4f}", f"{v:.4f}", N_EVAL])
     print(f"\nWrote {csv_path}")
 
     # Write convergence CSVs
@@ -228,10 +275,10 @@ def main():
         for tpc in TGC_LIST:
             f.write(f"--- tpc={tpc} ({tpc*5} tasks) ---\n")
             for policy in ["HDM", "AC", "PPO", "SAC", "Static"]:
-                m, s = all_results[tpc][policy]
+                m, s, d, v = all_results[tpc][policy]
                 flag = " <-- HDM" if policy == "HDM" else ""
                 flag = " <-- baseline" if policy == "Static" else flag
-                f.write(f"  {policy:<10} ISR={m:.4f} +/- {s:.4f}{flag}\n")
+                f.write(f"  {policy:<10} ISR={m:.4f} +/- {s:.4f}  delay={d:.3f}s  dist={v:.4f}{flag}\n")
             hdm = all_results[tpc]["HDM"][0]
             static = all_results[tpc]["Static"][0]
             best_bl = max(all_results[tpc][p][0] for p in ["AC", "PPO", "SAC"])
@@ -249,6 +296,9 @@ def main():
 
     print(f"Wrote {summary_path}")
     print(f"\nDone at {timestamp()}. All results in {RESULTS_DIR}/")
+
+    print("\nRunning N-step ablation (Fig 12a)...")
+    run_ablation_N()
 
 
 if __name__ == "__main__":

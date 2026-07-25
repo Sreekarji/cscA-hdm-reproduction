@@ -29,7 +29,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from mcs_table import select_mcs_for_sinr, compute_rate_from_mcs, select_mcs_for_mim_and_sinr, get_mcs_entry
-from cscqi import adjust_intent
+from cscqi import compute_isr
 from relay_selection import (
     SemanticRelay, select_relay as relay_select,
     compute_distortion as relay_compute_distortion,
@@ -45,7 +45,7 @@ N_CLUSTERS_LOS     = 12         # LOS clusters, 3GPP TR 36.873 Table 7.3-6
 N_CLUSTERS_NLOS    = 19         # NLOS clusters
 N_RAYS             = 20         # rays per cluster
 BLOCK_LENGTH       = 1000
-DEFAULT_TX_POWER_DBM = 23.0
+DEFAULT_TX_POWER_DBM = 30.0
 DEFAULT_BANDWIDTH_HZ = 10e6
 INTERFERENCE_CELLS = 6          # top-K interferers, Section IV.A.3
 
@@ -53,6 +53,14 @@ INTERFERENCE_CELLS = 6          # top-K interferers, Section IV.A.3
 # BW allocation constant — controls how sharply HDM output maps to BW
 # ---------------------------------------------------------------------------
 BW_SOFTMAX_TEMP = 1.0   # was 0.3 — too sharp, made softmax near-argmax
+
+# FIX F: Eq. 19-20 attenuation factors, single source of truth.
+OMEGA1_DELAY   = 0.05
+OMEGA2_QUALITY = 0.02
+
+BLER_CEIL         = 0.95   # FIX A3: saturating BLER ceiling
+BLER_SLOPE        = 0.76   # bler≈0.30 at overreach=1.5, 0.50 at 2.0
+MIN_BW_SHARE_FRAC = 0.10   # FIX BW-FLOOR: each task keeps ≥10% of fair share
 
 
 class WirelessChannel:
@@ -312,6 +320,21 @@ def _softmax_bw_allocation(
     return (weights * total_bw).tolist()
 
 
+def _normalize_bw_allocation(raw_weights: list, total_bw: float,
+                             min_share_frac: float = MIN_BW_SHARE_FRAC) -> list:
+    """FIX B + FIX BW-FLOOR: simplex renorm with per-task bandwidth floor."""
+    w = np.clip(np.asarray(raw_weights, dtype=np.float64), 0.0, None)
+    s = w.sum()
+    if s <= 1e-12:
+        w = np.ones_like(w)
+        s = w.sum()
+    w = w / s
+    n = w.size
+    floor = float(min_share_frac) / n
+    w = floor + (1.0 - n * floor) * w
+    return (w * total_bw).tolist()
+
+
 class MultiCSCAEnvironment:
     """
     Multi-CSCA wireless communication environment.
@@ -392,8 +415,11 @@ class MultiCSCAEnvironment:
             quality_intents = np.random.uniform(0.92, 1.00, self.n_tasks).tolist()
             data_sizes      = (np.random.rand(self.n_tasks) * 0.5e6 + 0.1e6).tolist()
         elif self.difficulty == "medium":
-            delay_intents   = np.random.uniform(0.15, 0.50, self.n_tasks).tolist()
-            quality_intents = np.random.uniform(0.60, 0.85, self.n_tasks).tolist()
+            # FIX INTENT: delay must scale with system load
+            _n = self.n_tasks if hasattr(self, 'n_tasks') else len(SCt["data_sizes"])
+            _load = max(1.0, _n / 5.0)
+            delay_intents   = (np.random.uniform(0.10, 0.55, _n) * _load).tolist()
+            quality_intents = np.random.uniform(0.20, 0.55, _n).tolist()
             data_sizes      = (np.random.rand(self.n_tasks) * 0.4e6 + 0.1e6).tolist()
         else:  # easy
             delay_intents   = np.random.uniform(0.3, 1.0, self.n_tasks).tolist()
@@ -486,22 +512,8 @@ class MultiCSCAEnvironment:
 
         # Apply intent adjustment for high-traffic scenarios (Eq. 19-20)
         # When more than 70% of tasks are competing (high traffic),
-        # adjust intents to be more realistic
         n_competing = self.n_tasks
         traffic_load = n_competing / 10.0  # Normalized: >1 = high traffic
-
-        if traffic_load > 0.5:
-            tau_w = traffic_load - 0.5  # Waiting time proxy
-            for i in range(self.n_tasks):
-                adjusted_delay, adjusted_quality = adjust_intent(
-                    SCt["delay_intents"][i],
-                    SCt["quality_intents"][i],
-                    tau_w=tau_w,
-                    omega1=0.05,
-                    omega2=0.02,
-                )
-                SCt["delay_intents"][i] = adjusted_delay
-                SCt["quality_intents"][i] = adjusted_quality
 
         # Queuing delay tau_w (Eq. 16) — added to actual delay
         tau_w_actual = max(0.0, traffic_load - 0.5) * 0.05  # seconds
@@ -526,9 +538,7 @@ class MultiCSCAEnvironment:
         else:
             # Legacy fallback: n_cscas logits → expand to n_tasks
             raw_logits = [float(bw_tensor[i % self.n_cscas].item()) for i in range(self.n_tasks)]
-        bw_allocations = _softmax_bw_allocation(
-            raw_logits, self.bandwidth_total, temperature=BW_SOFTMAX_TEMP
-        )
+        bw_allocations = _normalize_bw_allocation(raw_logits, self.bandwidth_total)
         # ----------------------------------------------------------------
 
         results = []
@@ -576,6 +586,7 @@ class MultiCSCAEnvironment:
             )
 
             # Hook MCS action from HDM — override SINR-selected MCS
+            overreach, bler = 0.0, 0.0
             if "mcs" in action and action["mcs"] is not None:
                 mcs_probs = action["mcs"][0, min(i, action["mcs"].shape[1]-1), :]   # FIX 14b: per-task
                 mcs_choice_idx = int(mcs_probs.argmax().item())       # 0, 1, or 2
@@ -584,10 +595,22 @@ class MultiCSCAEnvironment:
                 chosen_mcs = get_mcs_entry(chosen_mcs_idx)
                 override_rate = compute_rate_from_mcs(chosen_mcs, bw_alloc)
                 override_rate = max(override_rate, 1e3)
-                delay = SCt["data_sizes"][i] / override_rate
-                metrics["mcs_index"] = chosen_mcs_idx
+                metrics["mcs_index"]  = chosen_mcs_idx
                 metrics["modulation"] = chosen_mcs["modulation"]
-                metrics["rate_bps"] = override_rate
+                metrics["rate_bps"]   = override_rate
+                # FIX A: write the override back into metrics
+                metrics["delay_s"]    = SCt["data_sizes"][i] / override_rate
+
+                # FIX A2: an aggressive MCS must not be free
+                shannon_eff = np.log2(1.0 + 10 ** (metrics["sinr_db"] / 10.0))
+                overreach = chosen_mcs["spectral_efficiency"] / max(0.95 * shannon_eff, 1e-6)
+                if overreach > 1.0:
+                    bler = float(np.clip(
+                        BLER_CEIL * (1.0 - np.exp(-BLER_SLOPE * (overreach - 1.0))),
+                        0.0, BLER_CEIL))
+                    metrics["distortion"] = float(np.clip(
+                        metrics["distortion"] + bler * (1.0 - metrics["distortion"]),
+                        0.0, 1.0))
 
             # Relay selection (Eq. 15 approximation)
             relay_info = relay_select(
@@ -602,17 +625,28 @@ class MultiCSCAEnvironment:
             delay      = metrics["delay_s"]
             distortion = metrics["distortion"]
             if relay_info["relay_needed"] and relay_info["relay_id"] is not None:
-                distortion    = relay_info["distortion"]
+                distortion = relay_info["distortion"]
+                # The relay recovers semantics but does not undo a block error
+                # caused by an over-aggressive MCS choice on the first hop.
+                if overreach > 1.0:
+                    distortion = float(np.clip(
+                        distortion + bler * (1.0 - distortion), 0.0, 1.0))
                 recovery_delay = (
                     SCt["data_sizes"][i] / max(metrics["rate_bps"], 1e3) * 0.1
                 )
-                delay = delay + recovery_delay
+                # τ_{r,B}: relay at midpoint → half distance → ~2× rate on second hop
+                tau_relay_rx = SCt["data_sizes"][i] / max(metrics["rate_bps"] * 2.0, 1e3)
+                delay = delay + recovery_delay + tau_relay_rx
+
+            # Eq. 19-20: tau_S_int and vartheta_S_int relaxed under queuing pressure.
+            tau_int_effective      = SCt["delay_intents"][i] * np.exp(OMEGA1_DELAY * tau_w_actual)
+            vartheta_int_effective = (1.0 - SCt["quality_intents"][i]) * np.exp(OMEGA2_QUALITY * tau_w_actual)
 
             results.append({
                 "tau_S":          delay + tau_w_actual,
                 "vartheta_S":     distortion,
-                "tau_S_int":      SCt["delay_intents"][i],
-                "vartheta_S_int": 1.0 - SCt["quality_intents"][i],  # quality→distortion scale
+                "tau_S_int":      tau_int_effective,
+                "vartheta_S_int": vartheta_int_effective,
                 "sinr_db":        metrics["sinr_db"],
                 "rate_bps":       metrics["rate_bps"],
                 "bw_alloc_hz":    bw_alloc,                  # for logging/debug

@@ -15,7 +15,7 @@ QWEN_PATH    = MP2_ROOT / "models" / "Qwen.Qwen2-VL-7B.Q4_K_M.gguf"
 
 # Data paths
 DATA_PATH    = MP2_ROOT / "data"
-CHECKPOINT_PATH = MP2_ROOT / "checkpoints"
+CHECKPOINT_PATH = MP2_ROOT / "results" / "checkpoints"
 CHECKPOINT_PATH.mkdir(parents=True, exist_ok=True)
 
 # Repo paths

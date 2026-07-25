@@ -25,11 +25,16 @@ class PerTaskDenoiser(nn.Module):
             nn.Linear(hidden_dim, hidden_dim), nn.SiLU(),
             nn.Linear(hidden_dim, task_action_dim),
         )
-        # Near-zero init so denoiser predicts near-zero noise at init
+        # Xavier init, last layer zeroed for near-identity at init
+        last = None
         for m in self.net.modules():
             if isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, mean=0.0, std=0.01)
+                nn.init.xavier_uniform_(m.weight, gain=0.5)
                 nn.init.zeros_(m.bias)
+                last = m
+        if last is not None:
+            nn.init.zeros_(last.weight)
+            nn.init.zeros_(last.bias)
 
     def forward(self, a_n, n, graph_emb, message_embs):
         # a_n: [Nt, task_action_dim]; graph_emb: [1, 256]; message_embs: [Nt, 256]
@@ -44,7 +49,7 @@ class DDPMActor(nn.Module):
     """Drop-in replacement for MLPActor. forward(graph_emb, message_embs) -> [1, action_dim]."""
     def __init__(self, graph_emb_dim=256, task_emb_dim=256, action_dim=80,
                  hidden_dim=256, n_tasks=20, n_mcs=3, n_denoising_steps=6,
-                 beta_min=0.01, beta_max=0.5):
+                 beta_min=0.1, beta_max=8.0):
         super().__init__()
         assert action_dim == n_tasks + n_tasks * n_mcs, \
             f"action_dim {action_dim} != n_tasks({n_tasks}) + n_tasks*n_mcs({n_tasks*n_mcs})"
@@ -58,6 +63,7 @@ class DDPMActor(nn.Module):
         self.denoiser = PerTaskDenoiser(self.task_dim, graph_emb_dim,
                                         task_emb_dim, hidden_dim, n_denoising_steps)
         self.bw_temperature = nn.Parameter(torch.tensor(1.0))
+        self.register_buffer("temp_scale", torch.tensor(2.0))
         self._build_schedule()
 
     def _build_schedule(self):
@@ -80,6 +86,9 @@ class DDPMActor(nn.Module):
         self.register_buffer("alphas", alphas)
         self.register_buffer("alphas_cumprod", alphas_cumprod)
         self.register_buffer("beta_tilde", beta_tilde)
+        assert float(alphas_cumprod[-1]) < 0.1, (
+            f"alpha_bar_N={float(alphas_cumprod[-1]):.4f} >= 0.1; "
+            f"raise beta_max so the reverse chain is not mostly pure noise.")
 
     def reverse_diffusion(self, graph_emb, message_embs, deterministic=False):
         device = graph_emb.device
@@ -103,10 +112,12 @@ class DDPMActor(nn.Module):
         if message_embs is None:
             raise ValueError("DDPMActor requires per-task message_embs from HAN")
         raw = self.reverse_diffusion(graph_emb, message_embs, deterministic)
-        bw = torch.softmax(raw[:, 0] / self.bw_temperature.abs().clamp_min(0.1),
-                           dim=0).unsqueeze(0)                      # [1, Nt]
-        mcs = torch.sigmoid(raw[:, 1:]).reshape(1, -1)              # [1, Nt*n_mcs]
-        return torch.cat([bw, mcs], dim=-1)                         # [1, action_dim]
+        logits = raw[:, 0]
+        logits = (logits - logits.mean()) / (logits.std() + 1e-6)
+        tau = self.bw_temperature.abs().clamp_min(0.1) * self.temp_scale
+        bw = torch.softmax(logits / tau, dim=0).unsqueeze(0)
+        mcs = torch.sigmoid(raw[:, 1:]).reshape(1, -1)
+        return torch.cat([bw, mcs], dim=-1)
 
 
 if __name__ == "__main__":

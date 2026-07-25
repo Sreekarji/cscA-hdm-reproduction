@@ -1,46 +1,46 @@
 ============================================================
 CSCA-SemCom Final Results
 Policy: DDPM
-Generated: 2026-07-24 08:14:58
+Generated: 2026-07-25 10:54:11
 ============================================================
 
 --- tpc=1 (5 tasks) ---
-  HDM        ISR=0.7870 +/- 0.1779 <-- HDM
-  AC         ISR=0.4620 +/- 0.2257
-  PPO        ISR=0.4620 +/- 0.2293
-  SAC        ISR=0.5120 +/- 0.2113
-  Static     ISR=0.4860 +/- 0.2232 <-- baseline
-  HDM vs Static: +61.9%
-  HDM vs best RL baseline: +53.7%
+  HDM        ISR=0.3900 +/- 0.1977  delay=0.203s  dist=0.5672 <-- HDM
+  AC         ISR=0.4930 +/- 0.2029  delay=0.089s  dist=0.6055
+  PPO        ISR=0.4050 +/- 0.1923  delay=0.037s  dist=0.6565
+  SAC        ISR=0.4410 +/- 0.2023  delay=0.128s  dist=0.6033
+  Static     ISR=0.3180 +/- 0.2090  delay=0.419s  dist=0.4440 <-- baseline
+  HDM vs Static: +22.6%
+  HDM vs best RL baseline: -20.9%
 
 --- tpc=2 (10 tasks) ---
-  HDM        ISR=0.5885 +/- 0.1327 <-- HDM
-  AC         ISR=0.3040 +/- 0.1268
-  PPO        ISR=0.3165 +/- 0.1359
-  SAC        ISR=0.3345 +/- 0.1223
-  Static     ISR=0.2875 +/- 0.1330 <-- baseline
-  HDM vs Static: +104.7%
-  HDM vs best RL baseline: +75.9%
+  HDM        ISR=0.5310 +/- 0.1294  delay=0.215s  dist=0.5741 <-- HDM
+  AC         ISR=0.4170 +/- 0.1527  delay=0.105s  dist=0.6543
+  PPO        ISR=0.5175 +/- 0.1306  delay=0.186s  dist=0.5944
+  SAC        ISR=0.3430 +/- 0.1373  delay=0.249s  dist=0.6694
+  Static     ISR=0.3115 +/- 0.1517  delay=0.863s  dist=0.4459 <-- baseline
+  HDM vs Static: +70.5%
+  HDM vs best RL baseline: +2.6%
 
 --- tpc=4 (20 tasks) ---
-  HDM        ISR=0.3822 +/- 0.0963 <-- HDM
-  AC         ISR=0.1713 +/- 0.0767
-  PPO        ISR=0.1728 +/- 0.0731
-  SAC        ISR=0.2098 +/- 0.0777
-  Static     ISR=0.1492 +/- 0.0660 <-- baseline
-  HDM vs Static: +156.1%
-  HDM vs best RL baseline: +82.2%
+  HDM        ISR=0.4900 +/- 0.0987  delay=0.564s  dist=0.5839 <-- HDM
+  AC         ISR=0.3862 +/- 0.1007  delay=0.201s  dist=0.6736
+  PPO        ISR=0.4643 +/- 0.0917  delay=0.273s  dist=0.6250
+  SAC        ISR=0.2988 +/- 0.0892  delay=0.903s  dist=0.6692
+  Static     ISR=0.2958 +/- 0.1002  delay=1.755s  dist=0.4376 <-- baseline
+  HDM vs Static: +65.7%
+  HDM vs best RL baseline: +5.5%
 
 --- tpc=10 (50 tasks) ---
-  HDM        ISR=0.1435 +/- 0.0464 <-- HDM
-  AC         ISR=0.0863 +/- 0.0346
-  PPO        ISR=0.0970 +/- 0.0379
-  SAC        ISR=0.0966 +/- 0.0363
-  Static     ISR=0.0887 +/- 0.0364 <-- baseline
-  HDM vs Static: +61.8%
-  HDM vs best RL baseline: +47.9%
+  HDM        ISR=0.4284 +/- 0.0632  delay=1.778s  dist=0.5895 <-- HDM
+  AC         ISR=0.2892 +/- 0.0597  delay=4.416s  dist=0.4369
+  PPO        ISR=0.5228 +/- 0.0599  delay=0.954s  dist=0.5906
+  SAC        ISR=0.2915 +/- 0.0564  delay=2.313s  dist=0.6735
+  Static     ISR=0.2913 +/- 0.0598  delay=4.405s  dist=0.4397 <-- baseline
+  HDM vs Static: +47.1%
+  HDM vs best RL baseline: -18.1%
 
 ============================================================
-HDM improvement over Static at tpc=4: +156.1%
-HDM improvement over best RL baseline at tpc=4: +82.2%
+HDM improvement over Static at tpc=4: +65.7%
+HDM improvement over best RL baseline at tpc=4: +5.5%
 ============================================================

@@ -1,0 +1,204 @@
+{
+  "text": {
+    "0": {
+      "similarity_mean": 0.9990853273868561,
+      "similarity_std": 0.009100859619969835,
+      "compression_mean": 0.7299422391695494,
+      "compression_std": 0.00044772781172176574,
+      "delay_mean": 0.09060135098621995,
+      "distortion_mean": 0.7000000000000002,
+      "n": 100,
+      "method": "word_truncation_eta073 + MiniLM_cosine"
+    },
+    "5": {
+      "similarity_mean": 0.9990853273868561,
+      "similarity_std": 0.009100859619969835,
+      "compression_mean": 0.7299422391695494,
+      "compression_std": 0.00044772781172176574,
+      "delay_mean": 0.03955826107473604,
+      "distortion_mean": 0.5,
+      "n": 100,
+      "method": "word_truncation_eta073 + MiniLM_cosine"
+    },
+    "10": {
+      "similarity_mean": 0.9990853273868561,
+      "similarity_std": 0.009100859619969835,
+      "compression_mean": 0.7299422391695494,
+      "compression_std": 0.00044772781172176574,
+      "delay_mean": 0.024560747115912843,
+      "distortion_mean": 0.3,
+      "n": 100,
+      "method": "word_truncation_eta073 + MiniLM_cosine"
+    },
+    "15": {
+      "similarity_mean": 0.9990853273868561,
+      "similarity_std": 0.009100859619969835,
+      "compression_mean": 0.7299422391695494,
+      "compression_std": 0.00044772781172176574,
+      "delay_mean": 0.015918516936077286,
+      "distortion_mean": 0.15,
+      "n": 100,
+      "method": "word_truncation_eta073 + MiniLM_cosine"
+    },
+    "20": {
+      "similarity_mean": 0.9990853273868561,
+      "similarity_std": 0.009100859619969835,
+      "compression_mean": 0.7299422391695494,
+      "compression_std": 0.00044772781172176574,
+      "delay_mean": 0.012073220876014906,
+      "distortion_mean": 0.07000000000000003,
+      "n": 100,
+      "method": "word_truncation_eta073 + MiniLM_cosine"
+    },
+    "25": {
+      "similarity_mean": 0.9990853273868561,
+      "similarity_std": 0.009100859619969835,
+      "compression_mean": 0.7299422391695494,
+      "compression_std": 0.00044772781172176574,
+      "delay_mean": 0.012073220876014906,
+      "distortion_mean": 0.03,
+      "n": 100,
+      "method": "word_truncation_eta073 + MiniLM_cosine"
+    }
+  },
+  "audio": {
+    "0": {
+      "similarity_mean": 0.8589975708723068,
+      "similarity_std": 0.12211814360791874,
+      "compression_mean": 0.7056516431083989,
+      "compression_std": 0.021712476772432866,
+      "delay_mean": 3.448797622264253e-05,
+      "distortion_mean": 0.7000000000000002,
+      "n": 50,
+      "method": "whisper_base + word_truncation + MiniLM_cosine"
+    },
+    "5": {
+      "similarity_mean": 0.8589975708723068,
+      "similarity_std": 0.12211814360791874,
+      "compression_mean": 0.7056516431083989,
+      "compression_std": 0.021712476772432866,
+      "delay_mean": 1.5058101810888928e-05,
+      "distortion_mean": 0.5,
+      "n": 50,
+      "method": "whisper_base + word_truncation + MiniLM_cosine"
+    },
+    "10": {
+      "similarity_mean": 0.8589975708723068,
+      "similarity_std": 0.12211814360791874,
+      "compression_mean": 0.7056516431083989,
+      "compression_std": 0.021712476772432866,
+      "delay_mean": 9.349203442592931e-06,
+      "distortion_mean": 0.30000000000000004,
+      "n": 50,
+      "method": "whisper_base + word_truncation + MiniLM_cosine"
+    },
+    "15": {
+      "similarity_mean": 0.8589975708723068,
+      "similarity_std": 0.12211814360791874,
+      "compression_mean": 0.7056516431083989,
+      "compression_std": 0.021712476772432866,
+      "delay_mean": 6.059483965914215e-06,
+      "distortion_mean": 0.15000000000000002,
+      "n": 50,
+      "method": "whisper_base + word_truncation + MiniLM_cosine"
+    },
+    "20": {
+      "similarity_mean": 0.8589975708723068,
+      "similarity_std": 0.12211814360791874,
+      "compression_mean": 0.7056516431083989,
+      "compression_std": 0.021712476772432866,
+      "delay_mean": 4.595747745152753e-06,
+      "distortion_mean": 0.07,
+      "n": 50,
+      "method": "whisper_base + word_truncation + MiniLM_cosine"
+    },
+    "25": {
+      "similarity_mean": 0.8589975708723068,
+      "similarity_std": 0.12211814360791874,
+      "compression_mean": 0.7056516431083989,
+      "compression_std": 0.021712476772432866,
+      "delay_mean": 4.595747745152753e-06,
+      "distortion_mean": 0.03,
+      "n": 50,
+      "method": "whisper_base + word_truncation + MiniLM_cosine"
+    }
+  },
+  "image": {
+    "0": {
+      "similarity_mean": 0.47151281356811525,
+      "similarity_std": 0.04763165502522854,
+      "compression_mean": 0.5,
+      "compression_std": 0.0,
+      "delay_mean": 1.3509862199405566e-05,
+      "distortion_mean": 0.7000000000000002,
+      "n": 50,
+      "method": "blip2_opt2.7b + word_truncation + MiniLM_cosine",
+      "note": "BLIP-2 fp16 captions; falls back to filename proxy if OOM"
+    },
+    "5": {
+      "similarity_mean": 0.47151281356811525,
+      "similarity_std": 0.04763165502522854,
+      "compression_mean": 0.5,
+      "compression_std": 0.0,
+      "delay_mean": 5.898661003952103e-06,
+      "distortion_mean": 0.5,
+      "n": 50,
+      "method": "blip2_opt2.7b + word_truncation + MiniLM_cosine",
+      "note": "BLIP-2 fp16 captions; falls back to filename proxy if OOM"
+    },
+    "10": {
+      "similarity_mean": 0.47151281356811525,
+      "similarity_std": 0.04763165502522854,
+      "compression_mean": 0.5,
+      "compression_std": 0.0,
+      "delay_mean": 3.6623329060611602e-06,
+      "distortion_mean": 0.30000000000000004,
+      "n": 50,
+      "method": "blip2_opt2.7b + word_truncation + MiniLM_cosine",
+      "note": "BLIP-2 fp16 captions; falls back to filename proxy if OOM"
+    },
+    "15": {
+      "similarity_mean": 0.47151281356811525,
+      "similarity_std": 0.04763165502522854,
+      "compression_mean": 0.5,
+      "compression_std": 0.0,
+      "delay_mean": 2.373661848133115e-06,
+      "distortion_mean": 0.15000000000000002,
+      "n": 50,
+      "method": "blip2_opt2.7b + word_truncation + MiniLM_cosine",
+      "note": "BLIP-2 fp16 captions; falls back to filename proxy if OOM"
+    },
+    "20": {
+      "similarity_mean": 0.47151281356811525,
+      "similarity_std": 0.04763165502522854,
+      "compression_mean": 0.5,
+      "compression_std": 0.0,
+      "delay_mean": 1.8002772426953744e-06,
+      "distortion_mean": 0.07,
+      "n": 50,
+      "method": "blip2_opt2.7b + word_truncation + MiniLM_cosine",
+      "note": "BLIP-2 fp16 captions; falls back to filename proxy if OOM"
+    },
+    "25": {
+      "similarity_mean": 0.47151281356811525,
+      "similarity_std": 0.04763165502522854,
+      "compression_mean": 0.5,
+      "compression_std": 0.0,
+      "delay_mean": 1.8002772426953744e-06,
+      "distortion_mean": 0.03,
+      "n": 50,
+      "method": "blip2_opt2.7b + word_truncation + MiniLM_cosine",
+      "note": "BLIP-2 fp16 captions; falls back to filename proxy if OOM"
+    }
+  },
+  "paper_targets": {
+    "text_compression": 0.73,
+    "audio_compression": 0.32,
+    "image_compression": 0.21
+  },
+  "notes": [
+    "Image uses filename-based caption proxy (Qwen2-VL vision not available)",
+    "Compression uses word-truncation at eta=0.73",
+    "Similarity via MiniLM cosine; word-overlap Jaccard fallback"
+  ]
+}
