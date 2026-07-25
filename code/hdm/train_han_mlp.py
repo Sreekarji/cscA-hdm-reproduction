@@ -243,8 +243,6 @@ class HANMLPTrainer:
 
         self.episode = 0
         self.best_isr = 0.0
-        self.patience = 300
-        self.no_improve_count = 0
         self.history = []
         self._ckpt_suffix = ""
 
@@ -403,7 +401,6 @@ class HANMLPTrainer:
                 eval_isr = float(np.mean(eval_isrs))
                 if eval_isr > self.best_isr:
                     self.best_isr = eval_isr
-                    self.no_improve_count = 0
                     torch.save({
                         "han":        self.han.state_dict(),
                         "actor":      self.actor.state_dict(),
@@ -416,11 +413,6 @@ class HANMLPTrainer:
                     }, os.path.join(CHECKPOINT_DIR,
                                     f"han_{POLICY}_tpc{self.tasks_per_csca}{self._ckpt_suffix}_best.pt"))
                     log(f"  -> Best eval ISR: {eval_isr:.3f} (ep {ep})")
-                else:
-                    self.no_improve_count += 50
-                    if self.no_improve_count >= self.patience:
-                        log(f"  [early stop] No improvement for {self.patience} eval intervals. Stopping at ep {ep}.")
-                        break
 
         return self.best_isr
 
