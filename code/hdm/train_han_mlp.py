@@ -218,7 +218,7 @@ class HANMLPTrainer:
 
         self.episode = 0
         self.best_isr = 0.0
-        self.patience = 150
+        self.patience = 300
         self.no_improve_count = 0
         self.history = []
         self._ckpt_suffix = ""
@@ -392,7 +392,7 @@ class HANMLPTrainer:
                                     f"han_{POLICY}_tpc{self.tasks_per_csca}{self._ckpt_suffix}_best.pt"))
                     log(f"  -> Best eval ISR: {eval_isr:.3f} (ep {ep})")
                 else:
-                    self.no_improve_count += 1
+                    self.no_improve_count += 50
                     if self.no_improve_count >= self.patience:
                         log(f"  [early stop] No improvement for {self.patience} eval intervals. Stopping at ep {ep}.")
                         break
