@@ -33,7 +33,10 @@ N_RAYS             = 20         # rays per cluster
 BLOCK_LENGTH       = 1000
 DEFAULT_TX_POWER_DBM = 30.0
 DEFAULT_BANDWIDTH_HZ = 10e6
-INTERFERENCE_CELLS = 6          # top-K interferers, Section IV.A.3
+INTERFERENCE_CELLS = 3
+INTERFERER_DISTANCE_MIN_KM = 1.5
+INTERFERER_DISTANCE_MAX_KM = 4.0
+INTERFERER_POWER_OFFSET_DB = -1
 
 # ---------------------------------------------------------------------------
 # BW allocation
@@ -371,7 +374,7 @@ class MultiCSCAEnvironment:
         elif self.difficulty == "medium":
             # FIX INTENT: delay must scale with system load
             _n = self.n_tasks if hasattr(self, 'n_tasks') else len(SCt["data_sizes"])
-            delay_intents   = np.random.uniform(0.50, 1.50, _n).tolist()
+            delay_intents   = np.random.uniform(0.50, 2.50, _n).tolist()
             quality_intents = np.random.uniform(0.10, 0.40, _n).tolist()
             data_sizes      = (np.random.rand(self.n_tasks) * 0.4e6 + 0.1e6).tolist()
         else:  # easy
@@ -514,11 +517,15 @@ class MultiCSCAEnvironment:
             # Inter-cell interference from other base stations
             interferer_powers = []
             if target_snr_db is None:
-                for j in range(self.n_bs):
-                    if j != i % self.n_bs:
-                        d_int = np.random.uniform(0.5, 3.0)
-                        rsrp_int = self.channel.compute_rsrp(tx_power, d_int, los=True)
-                        interferer_powers.append(rsrp_int)
+                for j in range(INTERFERENCE_CELLS):
+                    d_int = np.random.uniform(INTERFERER_DISTANCE_MIN_KM,
+                                              INTERFERER_DISTANCE_MAX_KM)
+                    rsrp_int = self.channel.compute_rsrp(
+                        tx_power + INTERFERER_POWER_OFFSET_DB,
+                        d_int,
+                        los=False
+                    )
+                    interferer_powers.append(rsrp_int)
 
             # Update channel bandwidth to CSCA i's allocated BW
             self.channel.bandwidth = bw_alloc
