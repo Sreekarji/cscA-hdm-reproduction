@@ -113,10 +113,14 @@ def intents_from_state(state):
 
 
 def parse_action(action, n_tasks, n_relays, n_mcs):
-    """Split flat action tensor into bandwidth/mcs dicts (relay removed — FIX 14c)."""
-    bw = action[:, :n_tasks]
-    mcs = action[:, n_tasks: n_tasks + n_tasks * n_mcs].reshape(1, n_tasks, n_mcs)
-    relay = torch.zeros(1, n_tasks, n_relays, device=action.device)
+    """Split flat action tensor into bandwidth/relay/mcs dicts.
+    Layout: [BW: n_tasks | relay: n_tasks*n_relays | MCS: n_tasks*n_mcs]
+    """
+    bw    = action[:, :n_tasks]
+    relay = torch.sigmoid(
+        action[:, n_tasks: n_tasks + n_tasks * n_relays]
+    ).reshape(1, n_tasks, n_relays)
+    mcs   = action[:, n_tasks + n_tasks * n_relays:].reshape(1, n_tasks, n_mcs)
     return {"bandwidth": bw, "relay": relay, "mcs": mcs}
 
 
@@ -146,7 +150,9 @@ class HANMLPTrainer:
         self.n_mcs = 3
         self.tasks_per_csca = tasks_per_csca
         self.n_tasks = self.n_cscas * tasks_per_csca
-        self.action_dim = self.n_tasks + self.n_tasks * self.n_mcs  # BW + MCS only (FIX 14c)
+        self.action_dim = (self.n_tasks
+                           + self.n_tasks * self.n_relays
+                           + self.n_tasks * self.n_mcs)
         self.difficulty = difficulty
 
         # HAN
@@ -161,7 +167,7 @@ class HANMLPTrainer:
             self.actor = DDPMActor(
                 graph_emb_dim=256, task_emb_dim=256,
                 action_dim=self.action_dim, hidden_dim=256,
-                n_tasks=self.n_tasks, n_mcs=self.n_mcs,
+                n_tasks=self.n_tasks, n_relays=self.n_relays, n_mcs=self.n_mcs,
                 n_denoising_steps=6,
             ).to(self.device)
         else:
@@ -246,9 +252,9 @@ class HANMLPTrainer:
         bw_logits = torch.log(action[:, :self.n_tasks].clamp_min(1e-8))
         bw_logits = bw_logits + torch.randn_like(bw_logits) * sigma * 3.0
         bw = torch.softmax(bw_logits, dim=-1)
-        mcs = (action[:, self.n_tasks:]
-               + torch.randn_like(action[:, self.n_tasks:]) * sigma).clamp(0.0, 1.0)
-        action = torch.cat([bw, mcs], dim=-1)
+        relay_and_mcs = (action[:, self.n_tasks:]
+                         + torch.randn_like(action[:, self.n_tasks:]) * sigma).clamp(0.0, 1.0)
+        action = torch.cat([bw, relay_and_mcs], dim=-1)
 
         # ---- Environment step ----
         result = self.env.step(
@@ -537,14 +543,18 @@ class PerTaskGaussianActor(nn.Module):
     LOG_STD_MAX =  0.5
 
     def __init__(self, graph_emb_dim=256, task_emb_dim=256,
-                 n_tasks=20, n_mcs=3, hidden=256):
+                 n_tasks=20, n_relays=5, n_mcs=3, hidden=256):
         super().__init__()
         self.n_tasks = n_tasks
+        self.n_relays = n_relays
         self.n_mcs = n_mcs
-        self.action_dim = n_tasks + n_tasks * n_mcs
+        self.action_dim = n_tasks + n_tasks * n_relays + n_tasks * n_mcs
         self.task_bw_head = nn.Sequential(
             nn.Linear(task_emb_dim, hidden), nn.ReLU(),
             nn.Linear(hidden, 1))
+        self.task_relay_head = nn.Sequential(
+            nn.Linear(task_emb_dim + graph_emb_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, n_relays))
         self.task_mcs_head = nn.Sequential(
             nn.Linear(task_emb_dim + graph_emb_dim, hidden), nn.ReLU(),
             nn.Linear(hidden, n_mcs))
@@ -555,9 +565,11 @@ class PerTaskGaussianActor(nn.Module):
             graph_emb = graph_emb.unsqueeze(0)
         bw = self.task_bw_head(message_embs).squeeze(-1).unsqueeze(0)  # [1, Nt] logits
         g = graph_emb.expand(message_embs.shape[0], -1)
+        relay = self.task_relay_head(torch.cat([message_embs, g], dim=-1))  # [Nt, n_relays]
+        relay = relay.reshape(1, -1)                                        # [1, Nt*n_relays]
         mcs = self.task_mcs_head(torch.cat([message_embs, g], dim=-1))  # [Nt, n_mcs]
         mcs = mcs.reshape(1, -1)                                        # [1, Nt*n_mcs]
-        return torch.cat([bw, mcs], dim=-1)                             # [1, action_dim] raw
+        return torch.cat([bw, relay, mcs], dim=-1)                     # [1, action_dim] raw
 
     def forward(self, graph_emb, message_embs):
         raw = self._mean(graph_emb, message_embs)
@@ -565,8 +577,9 @@ class PerTaskGaussianActor(nn.Module):
 
     def _squash(self, raw):
         bw = torch.softmax(raw[:, :self.n_tasks].clamp(-6.0, 6.0), dim=-1)
-        mcs = torch.sigmoid(raw[:, self.n_tasks:])
-        return torch.cat([bw, mcs], dim=-1)
+        relay = torch.sigmoid(raw[:, self.n_tasks:self.n_tasks + self.n_tasks * self.n_relays])
+        mcs = torch.sigmoid(raw[:, self.n_tasks + self.n_tasks * self.n_relays:])
+        return torch.cat([bw, relay, mcs], dim=-1)
 
     def get_dist(self, graph_emb, message_embs):
         mean = self._mean(graph_emb, message_embs)
@@ -627,7 +640,7 @@ def train_ac_baseline(
         p.requires_grad = False
     han.eval()
 
-    actor = PerTaskGaussianActor(256, 256, n_tasks, n_mcs).to(DEVICE)
+    actor = PerTaskGaussianActor(256, 256, n_tasks, n_relays, n_mcs).to(DEVICE)
     critic = StateCritic(256).to(DEVICE)
     opt_a = optim.Adam(actor.parameters(), lr=lr)
     opt_c = optim.Adam(critic.parameters(), lr=lr)
@@ -693,7 +706,7 @@ def train_ppo_baseline(
         p.requires_grad = False
     han.eval()
 
-    actor = PerTaskGaussianActor(256, 256, n_tasks, n_mcs).to(DEVICE)
+    actor = PerTaskGaussianActor(256, 256, n_tasks, n_relays, n_mcs).to(DEVICE)
     critic = StateCritic(256).to(DEVICE)
     opt_a = optim.Adam(actor.parameters(), lr=lr)
     opt_c = optim.Adam(critic.parameters(), lr=lr)
@@ -788,7 +801,7 @@ def train_sac_baseline(
         p.requires_grad = False
     han.eval()
 
-    actor = PerTaskGaussianActor(256, 256, n_tasks, n_mcs).to(DEVICE)
+    actor = PerTaskGaussianActor(256, 256, n_tasks, n_relays, n_mcs).to(DEVICE)
     q_critic = TwinQCritic(256, action_dim).to(DEVICE)
     opt_a = optim.Adam(actor.parameters(), lr=lr)
     opt_q = optim.Adam(q_critic.parameters(), lr=lr)

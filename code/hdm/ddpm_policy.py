@@ -47,16 +47,22 @@ class PerTaskDenoiser(nn.Module):
 
 class DDPMActor(nn.Module):
     """Drop-in replacement for MLPActor. forward(graph_emb, message_embs) -> [1, action_dim]."""
-    def __init__(self, graph_emb_dim=256, task_emb_dim=256, action_dim=80,
-                 hidden_dim=256, n_tasks=20, n_mcs=3, n_denoising_steps=6,
-                 beta_min=0.1, beta_max=8.0):
+    def __init__(self, graph_emb_dim=256, task_emb_dim=256, action_dim=None,
+                 hidden_dim=256, n_tasks=20, n_relays=5, n_mcs=3,
+                 n_denoising_steps=6, beta_min=0.1, beta_max=8.0):
         super().__init__()
-        assert action_dim == n_tasks + n_tasks * n_mcs, \
-            f"action_dim {action_dim} != n_tasks({n_tasks}) + n_tasks*n_mcs({n_tasks*n_mcs})"
-        self.n_tasks = n_tasks
-        self.n_mcs = n_mcs
+        self.n_tasks  = n_tasks
+        self.n_relays = n_relays
+        self.n_mcs    = n_mcs
+        self.task_dim = 1 + n_relays + n_mcs   # BW + relay + MCS per task
+        expected = n_tasks + n_tasks * n_relays + n_tasks * n_mcs
+        if action_dim is None:
+            action_dim = expected
+        assert action_dim == expected, (
+            f"action_dim {action_dim} != {expected} "
+            f"(n_tasks={n_tasks}, n_relays={n_relays}, n_mcs={n_mcs})"
+        )
         self.action_dim = action_dim
-        self.task_dim = 1 + n_mcs          # per-task: 1 BW logit + n_mcs MCS logits
         self.N = n_denoising_steps
         self.beta_min = beta_min
         self.beta_max = beta_max
@@ -112,21 +118,35 @@ class DDPMActor(nn.Module):
         if message_embs is None:
             raise ValueError("DDPMActor requires per-task message_embs from HAN")
         raw = self.reverse_diffusion(graph_emb, message_embs, deterministic)
+        # raw: [n_tasks, task_dim] = [n_tasks, 1 + n_relays + n_mcs]
+
+        # BW: col 0 -> softmax with learnable temperature
         logits = raw[:, 0]
         logits = (logits - logits.mean()) / (logits.std() + 1e-6)
         tau = self.bw_temperature.abs().clamp_min(0.1) * self.temp_scale
-        bw = torch.softmax(logits / tau, dim=0).unsqueeze(0)
-        mcs = torch.sigmoid(raw[:, 1:]).reshape(1, -1)
-        return torch.cat([bw, mcs], dim=-1)
+        bw = torch.softmax(logits / tau, dim=0).unsqueeze(0)       # [1, n_tasks]
+
+        # relay: cols 1..n_relays -> sigmoid
+        relay = torch.sigmoid(
+            raw[:, 1: 1 + self.n_relays]
+        ).reshape(1, -1)                                             # [1, n_tasks*n_relays]
+
+        # MCS: cols n_relays+1.. -> sigmoid
+        mcs = torch.sigmoid(
+            raw[:, 1 + self.n_relays:]
+        ).reshape(1, -1)                                             # [1, n_tasks*n_mcs]
+
+        return torch.cat([bw, relay, mcs], dim=-1)                  # [1, action_dim]
 
 
 if __name__ == "__main__":
     # Smoke test
-    actor = DDPMActor(n_tasks=20, n_mcs=3)
+    actor = DDPMActor(n_tasks=20, n_relays=5, n_mcs=3)
     ge = torch.randn(1, 256)
     me = torch.randn(20, 256)
     out = actor(ge, message_embs=me)
-    assert out.shape == (1, 80), f"Shape mismatch: {out.shape}"
+    expected_dim = 20 + 20*5 + 20*3   # 180
+    assert out.shape == (1, expected_dim), f"Shape mismatch: {out.shape}, expected (1,{expected_dim})"
     assert abs(out[0, :20].sum().item() - 1.0) < 0.01, f"BW doesn't sum to 1: {out[0,:20].sum()}"
     # Check gradient flow
     loss = -out.sum()

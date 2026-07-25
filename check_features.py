@@ -50,10 +50,10 @@ def main():
     print("\n== 3. DDPMActor gradient (denoiser params should get > 0 grad) ==")
     n_tasks = env.n_tasks   # 10 tasks (tpc=2)
     n_mcs   = env.n_mcs     # 3
+    n_relays = env.n_relays
     actor   = DDPMActor(
         graph_emb_dim=256, task_emb_dim=256,
-        action_dim=n_tasks + n_tasks * n_mcs,
-        n_tasks=n_tasks, n_mcs=n_mcs, n_denoising_steps=6,
+        n_tasks=n_tasks, n_relays=n_relays, n_mcs=n_mcs, n_denoising_steps=6,
     ).to(device)
 
     intents = [[m[1], m[2]] for m in state["SCt"]["message_features"]]
@@ -81,7 +81,8 @@ def main():
 
     print("\n== 5. Action shape and BW simplex ==")
     bw_slice = action[0, :n_tasks]
-    print(f"  action shape: {tuple(action.shape)}  (expected (1, {n_tasks + n_tasks*n_mcs}))")
+    expected_dim = n_tasks + n_tasks * n_relays + n_tasks * n_mcs
+    print(f"  action shape: {tuple(action.shape)}  (expected (1, {expected_dim}))")
     print(f"  BW sum: {bw_slice.sum().item():.6f}  (should be ~1.0)")
     assert abs(bw_slice.sum().item() - 1.0) < 0.01, "BW does not sum to 1!"
 
