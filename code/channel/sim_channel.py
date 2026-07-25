@@ -373,7 +373,7 @@ class MultiCSCAEnvironment:
             data_sizes      = (np.random.rand(self.n_tasks) * 0.5e6 + 0.1e6).tolist()
         elif self.difficulty == "medium":
             # FIX INTENT: delay must scale with system load
-            _n = self.n_tasks if hasattr(self, 'n_tasks') else len(SCt["data_sizes"])
+            _n = self.n_tasks
             delay_intents   = np.random.uniform(0.50, 2.50, _n).tolist()
             quality_intents = np.random.uniform(0.10, 0.40, _n).tolist()
             data_sizes      = (np.random.rand(self.n_tasks) * 0.4e6 + 0.1e6).tolist()

@@ -25,7 +25,7 @@ TAU_MAX = 10.0          # Maximum delay for normalization (generous upper bound)
 VARTHETA_MAX = 1.0      # Maximum distortion (normalized)
 W_TAU = 0.5             # Delay weight (equal weights per paper Sec IV.C)
 W_VARTHETA = 0.5        # Quality weight
-VIOLATION_PENALTY = -10.0  # Hard negative for unmet intent (paper: "negative value")
+VIOLATION_PENALTY = -1.0  # Hard negative for unmet intent (paper: "negative value")
 
 _semantic_model = None
 
