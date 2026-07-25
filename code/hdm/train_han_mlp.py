@@ -112,6 +112,31 @@ def intents_from_state(state):
     return np.stack([urgency, q], axis=1).tolist()
 
 
+def flatten_state(state, n_tasks, n_cscas=5, n_relays=5):
+    """Flatten raw state into a fixed-dim vector — no HAN, no graph.
+    Used by raw-state baselines to match the paper's experimental setup."""
+    SCt = state["SCt"]
+    Rt  = state["Rt"]
+    di   = np.array(SCt["delay_intents"],   dtype=np.float32)[:n_tasks]
+    qi   = np.array(SCt["quality_intents"],  dtype=np.float32)[:n_tasks]
+    ds   = np.array(SCt["data_sizes"],       dtype=np.float32)[:n_tasks] / 6e5
+    mf   = np.array(SCt["message_features"], dtype=np.float32)[:n_tasks].flatten()
+    pos  = Rt.get("positions", {})
+    cp   = np.array(pos.get("cscas",  [[0,0]]*n_cscas),  dtype=np.float32).flatten()[:n_cscas*2]
+    bp   = np.array(pos.get("bs",     [[0,0]]*n_cscas),  dtype=np.float32).flatten()[:n_cscas*2]
+    rp   = np.array(pos.get("relays", [[0,0]]*n_relays), dtype=np.float32).flatten()[:n_relays*2]
+    ta   = np.zeros(n_tasks, dtype=np.float32)
+    for i, c in enumerate(Rt.get("task_assignments", [])[:n_tasks]):
+        ta[i] = float(c) / max(n_cscas - 1, 1)
+    rw   = np.array(Rt.get("relay_weights", [0.5]*n_tasks), dtype=np.float32)[:n_tasks]
+    vec  = np.concatenate([di, qi, ds, mf, cp, bp, rp, ta, rw])
+    return torch.tensor(vec, dtype=torch.float32)
+
+
+def raw_state_dim(n_tasks, n_cscas=5, n_relays=5):
+    return n_tasks*3 + n_tasks*4 + n_cscas*2 + n_cscas*2 + n_relays*2 + n_tasks + n_tasks
+
+
 def parse_action(action, n_tasks, n_relays, n_mcs):
     """Split flat action tensor into bandwidth/relay/mcs dicts.
     Layout: [BW: n_tasks | relay: n_tasks*n_relays | MCS: n_tasks*n_mcs]
@@ -513,17 +538,21 @@ def evaluate_baseline_actor(actor, han, env, n_tasks, n_relays, n_mcs,
                              n_episodes: int = 200):
     """Evaluate a baseline RL actor — same state distribution as HDM."""
     actor.eval()
-    han.eval()
+    device = next(actor.parameters()).device
     isrs, delays, dists = [], [], []
 
     with torch.no_grad():
         for _ in range(n_episodes):
             state = sample_eval_state(env)
-            intent_vectors = intents_from_state(state)
-            graph_emb, _, msg_embs = han.encode_state(
-                state, intent_vectors=intent_vectors
-            )
-            action = actor(graph_emb, msg_embs)
+            if isinstance(actor, RawStateActor):
+                sv     = flatten_state(state, n_tasks).to(device)
+                action = actor(sv)
+            else:
+                intent_vectors = intents_from_state(state)
+                graph_emb, _, msg_embs = han.encode_state(
+                    state, intent_vectors=intent_vectors
+                )
+                action = actor(graph_emb, msg_embs)
             result = env.step(
                 parse_action(action, n_tasks, n_relays, n_mcs), state
             )
@@ -533,7 +562,6 @@ def evaluate_baseline_actor(actor, han, env, n_tasks, n_relays, n_mcs,
             dists.append(dist)
 
     actor.train()
-    han.train()
     return (float(np.mean(isrs)), float(np.std(isrs)),
             float(np.mean(delays)), float(np.mean(dists)))
 
@@ -593,6 +621,66 @@ class PerTaskGaussianActor(nn.Module):
         return torch.distributions.Normal(mean, std)
 
 
+class RawStateActor(nn.Module):
+    """Raw-state actor for paper-equivalent baselines.
+    Takes flat state vector (no HAN) — same depth as PerTaskGaussianActor."""
+    LOG_STD_MIN = -5.0
+    LOG_STD_MAX =  0.5
+
+    def __init__(self, state_dim, n_tasks, n_relays, n_mcs, hidden=256):
+        super().__init__()
+        self.n_tasks   = n_tasks
+        self.n_relays  = n_relays
+        self.n_mcs     = n_mcs
+        self.action_dim = n_tasks + n_tasks * n_relays + n_tasks * n_mcs
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden),    nn.ReLU(),
+        )
+        self.bw_head    = nn.Linear(hidden, n_tasks)
+        self.relay_head = nn.Linear(hidden, n_tasks * n_relays)
+        self.mcs_head   = nn.Linear(hidden, n_tasks * n_mcs)
+        self.log_std    = nn.Parameter(torch.zeros(self.action_dim))
+
+    def _mean(self, state_vec):
+        if state_vec.dim() == 1:
+            state_vec = state_vec.unsqueeze(0)
+        h   = self.net(state_vec)
+        bw  = self.bw_head(h)
+        rel = self.relay_head(h)
+        mcs = self.mcs_head(h)
+        return torch.cat([bw, rel, mcs], dim=-1)
+
+    def _squash(self, raw):
+        bw    = torch.softmax(raw[:, :self.n_tasks].clamp(-6, 6), dim=-1)
+        relay = torch.sigmoid(raw[:, self.n_tasks:self.n_tasks + self.n_tasks*self.n_relays])
+        mcs   = torch.sigmoid(raw[:, self.n_tasks + self.n_tasks*self.n_relays:])
+        return torch.cat([bw, relay, mcs], dim=-1)
+
+    def forward(self, state_vec, **kwargs):
+        return self._squash(self._mean(state_vec))
+
+    def get_dist(self, state_vec):
+        mean = self._mean(state_vec)
+        std  = self.log_std.clamp(self.LOG_STD_MIN, self.LOG_STD_MAX).exp().expand_as(mean)
+        return torch.distributions.Normal(mean, std)
+
+
+class RawStateCritic(nn.Module):
+    """V(s) critic on raw state vector."""
+    def __init__(self, state_dim, hidden=256):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, hidden), nn.ReLU(),
+            nn.Linear(hidden, hidden),    nn.ReLU(),
+            nn.Linear(hidden, 1),
+        )
+    def forward(self, state_vec):
+        if state_vec.dim() == 1:
+            state_vec = state_vec.unsqueeze(0)
+        return self.net(state_vec)
+
+
 class TwinQCritic(nn.Module):
     """Twin Q-critics for SAC. Takes (state, action) as input."""
     def __init__(self, state_dim: int, action_dim: int, hidden: int = 256):
@@ -633,33 +721,27 @@ class StateCritic(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# AC Baseline — REINFORCE with learned value baseline (paper Eq. 33/35)
+# AC Baseline — raw state vector, no HAN (matches paper experimental setup)
 # ---------------------------------------------------------------------------
 
 def train_ac_baseline(
-    han: HANNetwork, env: MultiCSCAEnvironment,
-    n_tasks: int, n_relays: int, n_mcs: int,
-    action_dim: int, n_episodes: int = 1000, lr: float = 3e-4,
-) -> PerTaskGaussianActor:
-    """AC: Gaussian policy + state-value baseline. Paper Eq. 33/35."""
-    for p in han.parameters():
-        p.requires_grad = False
-    han.eval()
-
-    actor = PerTaskGaussianActor(256, 256, n_tasks, n_relays, n_mcs).to(DEVICE)
-    critic = StateCritic(256).to(DEVICE)
-    opt_a = optim.Adam(actor.parameters(), lr=lr)
-    opt_c = optim.Adam(critic.parameters(), lr=lr)
+    han, env, n_tasks, n_relays, n_mcs,
+    action_dim, n_episodes=1000, lr=3e-4,
+):
+    """AC baseline — raw state vector, no HAN. Matches paper experimental setup."""
+    s_dim  = raw_state_dim(n_tasks)
+    actor  = RawStateActor(s_dim, n_tasks, n_relays, n_mcs).to(DEVICE)
+    critic = RawStateCritic(s_dim).to(DEVICE)
+    opt_a  = optim.Adam(actor.parameters(),  lr=lr)
+    opt_c  = optim.Adam(critic.parameters(), lr=lr)
 
     for ep in range(n_episodes):
-        state = sample_eval_state(env)
-        intent_vectors = intents_from_state(state)
-        with torch.no_grad():
-            graph_emb, _, msg_embs = han.encode_state(state, intent_vectors=intent_vectors)
+        state  = sample_eval_state(env)
+        sv     = flatten_state(state, n_tasks).to(DEVICE)
 
-        dist = actor.get_dist(graph_emb, msg_embs)
+        dist       = actor.get_dist(sv)
         raw_action = dist.rsample()
-        action = actor._squash(raw_action)
+        action     = actor._squash(raw_action)
 
         result = env.step(parse_action(action, n_tasks, n_relays, n_mcs), state)
         reward = float(np.mean([
@@ -670,20 +752,17 @@ def train_ac_baseline(
         if not np.isfinite(reward):
             continue
 
-        reward_t = torch.tensor([[reward]], dtype=torch.float, device=DEVICE)
+        sv_t      = sv.unsqueeze(0) if sv.dim() == 1 else sv
+        reward_t  = torch.tensor([[reward]], dtype=torch.float, device=DEVICE)
 
-        # Critic update
-        v = critic(graph_emb.detach())
+        v      = critic(sv_t.detach())
         c_loss = nn.MSELoss()(v, reward_t)
-        opt_c.zero_grad()
-        c_loss.backward()
-        opt_c.step()
+        opt_c.zero_grad(); c_loss.backward(); opt_c.step()
 
-        # Actor update: REINFORCE with value baseline
         with torch.no_grad():
-            adv = (reward_t - critic(graph_emb.detach())).clamp(-5, 5)
+            adv = (reward_t - critic(sv_t.detach())).clamp(-5, 5)
         log_prob = dist.log_prob(raw_action).sum(dim=-1, keepdim=True)
-        a_loss = -(log_prob * adv).mean()
+        a_loss   = -(log_prob * adv).mean()
         opt_a.zero_grad()
         a_loss.backward()
         nn.utils.clip_grad_norm_(actor.parameters(), 1.0)
@@ -692,43 +771,35 @@ def train_ac_baseline(
         if ep % 100 == 0:
             print(f"  [AC] ep {ep}/{n_episodes} reward={reward:.3f} isr={isr:.3f}")
 
-    for p in han.parameters():
-        p.requires_grad = True
     return actor
 
 
 # ---------------------------------------------------------------------------
-# PPO Baseline — clipped surrogate with batched updates
+# PPO Baseline — raw state vector, no HAN (matches paper experimental setup)
 # ---------------------------------------------------------------------------
 
 def train_ppo_baseline(
-    han: HANNetwork, env: MultiCSCAEnvironment,
-    n_tasks: int, n_relays: int, n_mcs: int,
-    action_dim: int, n_episodes: int = 1000, lr: float = 3e-4,
-    batch_size: int = 32, n_epochs: int = 4, eps_clip: float = 0.2,
-) -> PerTaskGaussianActor:
-    """PPO: Gaussian policy, clipped surrogate, batched updates."""
-    for p in han.parameters():
-        p.requires_grad = False
-    han.eval()
+    han, env, n_tasks, n_relays, n_mcs,
+    action_dim, n_episodes=1000, lr=3e-4,
+    batch_size=32, n_epochs=4, eps_clip=0.2,
+):
+    """PPO baseline — raw state vector, no HAN. Matches paper experimental setup."""
+    s_dim  = raw_state_dim(n_tasks)
+    actor  = RawStateActor(s_dim, n_tasks, n_relays, n_mcs).to(DEVICE)
+    critic = RawStateCritic(s_dim).to(DEVICE)
+    opt_a  = optim.Adam(actor.parameters(),  lr=lr)
+    opt_c  = optim.Adam(critic.parameters(), lr=lr)
 
-    actor = PerTaskGaussianActor(256, 256, n_tasks, n_relays, n_mcs).to(DEVICE)
-    critic = StateCritic(256).to(DEVICE)
-    opt_a = optim.Adam(actor.parameters(), lr=lr)
-    opt_c = optim.Adam(critic.parameters(), lr=lr)
-
-    batch_graph, batch_msg, batch_action, batch_reward, batch_logp = [], [], [], [], []
+    batch_sv, batch_action, batch_reward, batch_logp = [], [], [], []
 
     for ep in range(n_episodes):
-        state = sample_eval_state(env)
-        intent_vectors = intents_from_state(state)
-        with torch.no_grad():
-            graph_emb, _, msg_embs = han.encode_state(state, intent_vectors=intent_vectors)
+        state  = sample_eval_state(env)
+        sv     = flatten_state(state, n_tasks).to(DEVICE)
 
-        dist = actor.get_dist(graph_emb, msg_embs)
+        dist       = actor.get_dist(sv)
         raw_action = dist.rsample()
-        action = actor._squash(raw_action)
-        log_prob = dist.log_prob(raw_action).sum(dim=-1, keepdim=True)
+        action     = actor._squash(raw_action)
+        log_prob   = dist.log_prob(raw_action).sum(dim=-1, keepdim=True)
 
         result = env.step(parse_action(action, n_tasks, n_relays, n_mcs), state)
         reward = float(np.mean([
@@ -738,96 +809,78 @@ def train_ppo_baseline(
         if not np.isfinite(reward):
             continue
 
-        batch_graph.append(graph_emb.detach())
-        batch_msg.append(msg_embs.detach().unsqueeze(0))  # [1, Nt, 256]
+        batch_sv.append(sv.detach())
         batch_action.append(raw_action.detach())
         batch_reward.append(reward)
         batch_logp.append(log_prob.detach())
 
-        # Update when batch is full
-        if len(batch_graph) >= batch_size:
-            g = torch.cat(batch_graph, dim=0)
-            m = torch.cat(batch_msg, dim=0)   # [B, Nt, 256]
-            a = torch.cat(batch_action, dim=0)
-            r = torch.tensor(batch_reward, dtype=torch.float, device=DEVICE).unsqueeze(-1)
-            old_lp = torch.cat(batch_logp, dim=0)
+        if len(batch_sv) >= batch_size:
+            sv_b  = torch.stack(batch_sv)
+            a_b   = torch.stack(batch_action)
+            r_b   = torch.tensor(batch_reward, dtype=torch.float, device=DEVICE).unsqueeze(-1)
+            lp_b  = torch.stack(batch_logp).squeeze(-1)
 
             with torch.no_grad():
-                v = critic(g)
-                adv = (r - v).squeeze(-1)
+                v   = critic(sv_b).squeeze(-1)
+                adv = (r_b.squeeze(-1) - v)
                 adv = (adv - adv.mean()) / (adv.std() + 1e-8)
                 adv = adv.clamp(-3, 3).unsqueeze(-1)
 
             for _ in range(n_epochs):
-                # Per-sample log-prob (msg_embs vary per sample)
-                new_lps = []
-                for i in range(len(g)):
-                    dist_new = actor.get_dist(g[i:i+1], m[i])
-                    new_lps.append(dist_new.log_prob(a[i:i+1]).sum(dim=-1, keepdim=True))
-                new_lp = torch.cat(new_lps, dim=0)
-                ratio = (new_lp - old_lp).exp()
-                surr1 = ratio * adv
-                surr2 = ratio.clamp(1 - eps_clip, 1 + eps_clip) * adv
-                a_loss = -torch.min(surr1, surr2).mean()
-
+                new_lp  = actor.get_dist(sv_b).log_prob(a_b).sum(dim=-1, keepdim=True)
+                ratio   = (new_lp - lp_b.unsqueeze(-1)).exp()
+                surr    = torch.min(ratio * adv,
+                                    ratio.clamp(1-eps_clip, 1+eps_clip) * adv)
+                a_loss  = -surr.mean()
                 opt_a.zero_grad()
                 a_loss.backward()
                 nn.utils.clip_grad_norm_(actor.parameters(), 1.0)
                 opt_a.step()
 
-            v_pred = critic(g.detach())
-            c_loss = nn.MSELoss()(v_pred, r)
-            opt_c.zero_grad()
-            c_loss.backward()
-            opt_c.step()
+            v_pred = critic(sv_b.detach())
+            c_loss = nn.MSELoss()(v_pred, r_b)
+            opt_c.zero_grad(); c_loss.backward(); opt_c.step()
 
-            batch_graph, batch_msg, batch_action, batch_reward, batch_logp = [], [], [], [], []
+            batch_sv, batch_action, batch_reward, batch_logp = [], [], [], []
 
         if ep % 100 == 0:
             isr = compute_isr(result["tasks"])
             print(f"  [PPO] ep {ep}/{n_episodes} reward={reward:.3f} isr={isr:.3f}")
 
-    for p in han.parameters():
-        p.requires_grad = True
     return actor
 
 
 # ---------------------------------------------------------------------------
-# SAC Baseline — twin Q-critics, squashed Gaussian, auto-alpha
+# SAC Baseline — raw state vector, no HAN (matches paper experimental setup)
 # ---------------------------------------------------------------------------
 
 def train_sac_baseline(
-    han: HANNetwork, env: MultiCSCAEnvironment,
-    n_tasks: int, n_relays: int, n_mcs: int,
-    action_dim: int, n_episodes: int = 1000, lr: float = 3e-4,
-    replay_size: int = 2000, batch_size: int = 64,
-) -> PerTaskGaussianActor:
-    """SAC: twin Q-critics, squashed Gaussian actor, auto-tuned entropy."""
-    for p in han.parameters():
-        p.requires_grad = False
-    han.eval()
+    han, env, n_tasks, n_relays, n_mcs,
+    action_dim, n_episodes=1000, lr=3e-4,
+    replay_size=2000, batch_size=64,
+):
+    """SAC baseline — raw state vector, no HAN. Matches paper experimental setup."""
+    s_dim      = raw_state_dim(n_tasks)
+    action_dim = n_tasks + n_tasks * n_relays + n_tasks * n_mcs
+    actor      = RawStateActor(s_dim, n_tasks, n_relays, n_mcs).to(DEVICE)
+    q_critic   = TwinQCritic(s_dim, action_dim).to(DEVICE)
+    opt_a      = optim.Adam(actor.parameters(),    lr=lr)
+    opt_q      = optim.Adam(q_critic.parameters(), lr=lr)
 
-    actor = PerTaskGaussianActor(256, 256, n_tasks, n_relays, n_mcs).to(DEVICE)
-    q_critic = TwinQCritic(256, action_dim).to(DEVICE)
-    opt_a = optim.Adam(actor.parameters(), lr=lr)
-    opt_q = optim.Adam(q_critic.parameters(), lr=lr)
+    log_alpha  = torch.tensor(-2.0, device=DEVICE, requires_grad=True)
+    opt_alpha  = optim.Adam([log_alpha], lr=lr)
+    target_ent = -float(action_dim)
 
-    log_alpha = torch.tensor(-2.0, device=DEVICE, requires_grad=True)
-    opt_alpha = optim.Adam([log_alpha], lr=lr)
-    target_entropy = -float(action_dim)
-
-    buf_g, buf_m, buf_a, buf_r = [], [], [], []
+    buf_sv, buf_a, buf_r = [], [], []
 
     for ep in range(n_episodes):
-        state = sample_eval_state(env)
-        intent_vectors = intents_from_state(state)
-        with torch.no_grad():
-            graph_emb, _, msg_embs = han.encode_state(state, intent_vectors=intent_vectors)
+        state  = sample_eval_state(env)
+        sv     = flatten_state(state, n_tasks).to(DEVICE)
 
-        dist = actor.get_dist(graph_emb, msg_embs)
+        dist       = actor.get_dist(sv)
         raw_action = dist.rsample()
-        action = actor._squash(raw_action)
-        log_prob = dist.log_prob(raw_action).sum(dim=-1, keepdim=True)
+        action     = actor._squash(raw_action)
+        log_prob   = dist.log_prob(raw_action).sum(dim=-1, keepdim=True)
 
         result = env.step(parse_action(action, n_tasks, n_relays, n_mcs), state)
         reward = float(np.mean([
@@ -838,59 +891,44 @@ def train_sac_baseline(
         if not np.isfinite(reward):
             continue
 
-        buf_g.append(graph_emb.detach())
-        buf_m.append(msg_embs.detach().unsqueeze(0))  # [1, Nt, 256]
+        buf_sv.append(sv.detach())
         buf_a.append(action.detach())
         buf_r.append(reward)
-        if len(buf_g) > replay_size:
-            buf_g, buf_m, buf_a, buf_r = buf_g[-replay_size:], buf_m[-replay_size:], buf_a[-replay_size:], buf_r[-replay_size:]
+        if len(buf_sv) > replay_size:
+            buf_sv, buf_a, buf_r = buf_sv[-replay_size:], buf_a[-replay_size:], buf_r[-replay_size:]
 
-        if len(buf_g) >= batch_size:
-            idx = np.random.choice(len(buf_g), batch_size, replace=False)
-            g_mb = torch.cat([buf_g[i] for i in idx], dim=0)
-            m_mb = torch.cat([buf_m[i] for i in idx], dim=0)
-            a_mb = torch.cat([buf_a[i] for i in idx], dim=0)
-            r_mb = torch.tensor([buf_r[i] for i in idx], dtype=torch.float, device=DEVICE).unsqueeze(-1)
+        if len(buf_sv) >= batch_size:
+            idx   = np.random.choice(len(buf_sv), batch_size, replace=False)
+            sv_mb = torch.stack([buf_sv[i] for i in idx])
+            a_mb  = torch.stack([buf_a[i]  for i in idx])
+            r_mb  = torch.tensor([buf_r[i] for i in idx],
+                                  dtype=torch.float, device=DEVICE).unsqueeze(-1)
 
-            q1, q2 = q_critic(g_mb.detach(), a_mb.detach())
-            q_loss = nn.MSELoss()(q1, r_mb) + nn.MSELoss()(q2, r_mb)
-            opt_q.zero_grad()
-            q_loss.backward()
+            q1, q2 = q_critic(sv_mb.detach(), a_mb.detach())
+            q_loss  = nn.MSELoss()(q1, r_mb) + nn.MSELoss()(q2, r_mb)
+            opt_q.zero_grad(); q_loss.backward()
             nn.utils.clip_grad_norm_(q_critic.parameters(), 1.0)
             opt_q.step()
 
-            # Per-sample actor update (msg_embs shape varies)
-            new_lps = []
-            new_acts = []
-            for i in range(len(g_mb)):
-                dn = actor.get_dist(g_mb[i:i+1], m_mb[i])
-                rn = dn.rsample()
-                an = actor._squash(rn)
-                new_lps.append(dn.log_prob(rn).sum(dim=-1, keepdim=True))
-                new_acts.append(an)
-            log_p_new = torch.cat(new_lps, dim=0)
-            act_new = torch.cat(new_acts, dim=0)
-            q1_new, q2_new = q_critic(g_mb.detach(), act_new)
-            q_min = torch.min(q1_new, q2_new)
-            alpha = log_alpha.exp()
-            a_loss = (alpha.detach() * log_p_new - q_min).mean()
-            opt_a.zero_grad()
-            a_loss.backward()
+            new_dist = actor.get_dist(sv_mb)
+            new_raw  = new_dist.rsample()
+            new_act  = actor._squash(new_raw)
+            new_lp   = new_dist.log_prob(new_raw).sum(dim=-1, keepdim=True)
+            q1n, q2n = q_critic(sv_mb.detach(), new_act)
+            alpha    = log_alpha.exp()
+            a_loss   = (alpha.detach() * new_lp - torch.min(q1n, q2n)).mean()
+            opt_a.zero_grad(); a_loss.backward()
             nn.utils.clip_grad_norm_(actor.parameters(), 1.0)
             opt_a.step()
 
-            alpha_loss = -(log_alpha * (log_p_new + target_entropy).detach()).mean()
-            opt_alpha.zero_grad()
-            alpha_loss.backward()
-            opt_alpha.step()
+            alpha_loss = -(log_alpha * (new_lp + target_ent).detach()).mean()
+            opt_alpha.zero_grad(); alpha_loss.backward(); opt_alpha.step()
             with torch.no_grad():
                 log_alpha.clamp_(-5.0, 1.0)
 
         if ep % 100 == 0:
             print(f"  [SAC] ep {ep}/{n_episodes} reward={reward:.3f} isr={isr:.3f}")
 
-    for p in han.parameters():
-        p.requires_grad = True
     return actor
 
 
