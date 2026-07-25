@@ -196,6 +196,37 @@ def compress_text(text, eta=COMPRESSION_ETA):
     return " ".join(words[:keep]), keep / max(len(words), 1)
 
 
+def apply_channel_to_text(text: str, distortion: float, rng) -> str:
+    """
+    M-FIX-1: realise channel distortion as word-level erasure and substitution.
+    Previously similarity was computed from compression only and the identical
+    scalar was written into every SNR bucket, so Fig 6a was a flat line.
+    """
+    words = text.split()
+    if not words:
+        return text
+    out = []
+    for w in words:
+        r = rng.random()
+        if r < distortion * 0.5:
+            continue
+        elif r < distortion * 0.7:
+            out.append(w[::-1] if len(w) > 3 else w)
+        else:
+            out.append(w)
+    return " ".join(out) if out else words[0]
+
+
+def compression_ratio_bits(original_source_bytes: int,
+                           transmitted_symbols: int,
+                           bits_per_symbol: int = 16) -> float:
+    """
+    M-FIX-2: compression ratio as transmitted semantic bits over original
+    source bits, matching the paper's definition.
+    """
+    return (transmitted_symbols * bits_per_symbol) / max(original_source_bytes * 8, 1)
+
+
 # ---------------------------------------------------------------------------
 # Section 5: Text modality
 # ---------------------------------------------------------------------------
@@ -236,14 +267,19 @@ def evaluate_text(sentences, snr_range):
         c, r = compress_text(s)
         compressed.append(c)
         compression_ratios.append(r)
-    sims = batch_similarity(sentences, compressed)
-    log(f"[text] Similarity: {sims.mean():.4f}  Compression: {np.mean(compression_ratios):.3f}")
     snr_metrics = channel_sim_snr(compressed, snr_range)
     results = {}
     for snr_db in snr_range:
+        rng = random.Random(1234 + snr_db)
+        d = snr_metrics[snr_db]["distortion_mean"]
+        received = [apply_channel_to_text(c, d, rng) for c in compressed]
+        sims = batch_similarity(sentences, received)
+        acc = float((sims > 0.80).mean())
+        log(f"[text] SNR={snr_db}dB: sim={sims.mean():.4f} acc={acc:.3f}")
         results[snr_db] = {
             "similarity_mean":  float(sims.mean()),
             "similarity_std":   float(sims.std()),
+            "accuracy_rate":    acc,
             "compression_mean": float(np.mean(compression_ratios)),
             "compression_std":  float(np.std(compression_ratios)),
             "delay_mean":       snr_metrics[snr_db]["delay_mean"],
@@ -251,7 +287,6 @@ def evaluate_text(sentences, snr_range):
             "n":                len(sentences),
             "method":           "word_truncation_eta073 + MiniLM_cosine",
         }
-        log(f"  [text] SNR={snr_db:3d}dB: sim={sims.mean():.4f}  delay={snr_metrics[snr_db]['delay_mean']:.4f}s")
     return results
 
 
@@ -298,22 +333,29 @@ def evaluate_audio(audio_files, snr_range):
         c, r = compress_text(t)
         compressed.append(c)
         compression_ratios.append(r)
-    sims = batch_similarity(transcripts, compressed)
-    log(f"[audio] Similarity: {sims.mean():.4f}  Compression: {np.mean(compression_ratios):.3f}")
     snr_metrics = channel_sim_snr(compressed, snr_range)
     results = {}
     for snr_db in snr_range:
+        rng = random.Random(1234 + snr_db)
+        d = snr_metrics[snr_db]["distortion_mean"]
+        received = [apply_channel_to_text(c, d, rng) for c in compressed]
+        sims = batch_similarity(transcripts, received)
+        acc = float((sims > 0.80).mean())
+        log(f"  [audio] SNR={snr_db}dB: sim={sims.mean():.4f} acc={acc:.3f}")
         results[snr_db] = {
             "similarity_mean":  float(sims.mean()),
             "similarity_std":   float(sims.std()),
-            "compression_mean": float(np.mean(compression_ratios)),
-            "compression_std":  float(np.std(compression_ratios)),
+            "accuracy_rate":    acc,
+            "compression_mean": float(np.mean([
+                compression_ratio_bits(os.path.getsize(fp), len(c.split()))
+                for fp, c in zip(audio_files[:len(transcripts)], compressed)
+            ])),
+            "compression_std":  0.0,
             "delay_mean":       snr_metrics[snr_db]["delay_mean"],
             "distortion_mean":  snr_metrics[snr_db]["distortion_mean"],
             "n":                len(transcripts),
             "method":           "whisper_base + word_truncation + MiniLM_cosine",
         }
-        log(f"  [audio] SNR={snr_db:3d}dB: sim={sims.mean():.4f}")
     return results
 
 
@@ -383,23 +425,30 @@ def evaluate_image(image_files, snr_range):
         comp, r = compress_text(c)
         compressed.append(comp)
         compression_ratios.append(r)
-    sims = batch_similarity(captions, compressed)
-    log(f"[image] Similarity: {sims.mean():.4f}  Compression: {np.mean(compression_ratios):.3f}")
     snr_metrics = channel_sim_snr(compressed, snr_range)
     results = {}
     for snr_db in snr_range:
+        rng = random.Random(1234 + snr_db)
+        d = snr_metrics[snr_db]["distortion_mean"]
+        received = [apply_channel_to_text(c, d, rng) for c in compressed]
+        sims = batch_similarity(captions, received)
+        acc = float((sims > 0.80).mean())
+        log(f"  [image] SNR={snr_db}dB: sim={sims.mean():.4f} acc={acc:.3f}")
         results[snr_db] = {
             "similarity_mean":  float(sims.mean()),
             "similarity_std":   float(sims.std()),
-            "compression_mean": float(np.mean(compression_ratios)),
-            "compression_std":  float(np.std(compression_ratios)),
+            "accuracy_rate":    acc,
+            "compression_mean": float(np.mean([
+                compression_ratio_bits(os.path.getsize(fp), len(c.split()))
+                for fp, c in zip(image_files[:len(captions)], compressed)
+            ])),
+            "compression_std":  0.0,
             "delay_mean":       snr_metrics[snr_db]["delay_mean"],
             "distortion_mean":  snr_metrics[snr_db]["distortion_mean"],
             "n":                len(captions),
             "method":           "blip2_opt2.7b + word_truncation + MiniLM_cosine",
             "note":             "BLIP-2 fp16 captions; falls back to filename proxy if OOM",
         }
-        log(f"  [image] SNR={snr_db:3d}dB: sim={sims.mean():.4f}")
     return results
 
 
@@ -498,23 +547,29 @@ def save_results(text_results, audio_results, image_results):
     with open(out_csv, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["SNR_dB",
-                    "Text_Sim", "Text_Sim_Std", "Text_Comp",
-                    "Audio_Sim", "Audio_Sim_Std", "Audio_Comp",
-                    "Image_Sim", "Image_Sim_Std", "Image_Comp"])
+                    "Text_Sim", "Text_Sim_Std", "Text_Acc", "Text_Comp",
+                    "Audio_Sim", "Audio_Sim_Std", "Audio_Acc", "Audio_Comp",
+                    "Image_Sim", "Image_Sim_Std", "Image_Acc", "Image_Comp"])
         for snr in SNR_RANGE:
             def g(res, key):
+                v = res.get(snr, {}).get(key)
+                return f"{v:.4f}" if v is not None else "N/A"
+            def ga(res, key):
                 v = res.get(snr, {}).get(key)
                 return f"{v:.4f}" if v is not None else "N/A"
             w.writerow([
                 snr,
                 g(text_results,  "similarity_mean"),
                 g(text_results,  "similarity_std"),
+                ga(text_results, "accuracy_rate"),
                 g(text_results,  "compression_mean"),
                 g(audio_results, "similarity_mean"),
                 g(audio_results, "similarity_std"),
+                ga(audio_results,"accuracy_rate"),
                 g(audio_results, "compression_mean"),
                 g(image_results, "similarity_mean"),
                 g(image_results, "similarity_std"),
+                ga(image_results,"accuracy_rate"),
                 g(image_results, "compression_mean"),
             ])
     log(f"[save] CSV: {out_csv}")
