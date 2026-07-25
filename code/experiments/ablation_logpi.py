@@ -170,18 +170,24 @@ class LogPiTrainer(HANMLPTrainer):
             state, intent_vectors=intent_vectors
         )
         action2, log_pi = self.actor.forward_with_logprob(graph_emb2, msg_embs2)
-        q_value = self.critic(graph_emb2, action2)
+        q_value = self.critic_target(graph_emb2, action2)
 
         actor_loss = -(LAMBDA_PI * log_pi + q_value.mean())
 
         self.opt_han.zero_grad()
         self.opt_actor.zero_grad()
         actor_loss.backward()
-        nn.utils.clip_grad_norm_(self.han.parameters(),   self.max_grad_norm)
-        nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+        nn.utils.clip_grad_norm_(self.han.parameters(),   self.max_grad_norm_actor)
+        nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm_actor)
         self.opt_han.step()
         self.opt_actor.step()
         self.opt_critic.zero_grad()
+
+        # Polyak averaging for target critic
+        with torch.no_grad():
+            for _p, _pt in zip(self.critic.parameters(),
+                               self.critic_target.parameters()):
+                _pt.data.mul_(1.0 - self.tau_polyak).add_(self.tau_polyak * _p.data)
 
         self.sched_han.step()
         self.sched_actor.step()

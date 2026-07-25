@@ -24,9 +24,7 @@ TPC_LIST        = [1, 2, 4, 10]
 def _action_from_bw(bw_vec, n_relays, n_mcs, device):
     n = len(bw_vec)
     return {
-        "bandwidth": torch.log(
-            torch.tensor(bw_vec, dtype=torch.float, device=device) + 1e-8
-        ).unsqueeze(0),
+        "bandwidth": torch.tensor(bw_vec, dtype=torch.float, device=device).unsqueeze(0),
         "relay": torch.zeros(1, n, n_relays, device=device),
         "mcs":   torch.tensor([[[0.0, 1.0, 0.0]] * n], device=device),
     }
