@@ -205,7 +205,7 @@ class HANMLPTrainer:
 
         # FIX 17a: Replay buffer for critic
         self.replay = []
-        self.replay_cap = 300
+        self.replay_cap = 1000
         self.critic_batch = 256
         self.critic_updates_per_step = 2
         self.critic_target = copy.deepcopy(self.critic).to(self.device)
@@ -316,7 +316,7 @@ class HANMLPTrainer:
                 state, intent_vectors=intent_vectors
             )
             action2 = self.actor(graph_emb2, message_embs=msg_embs2)
-            q_value = self.critic(graph_emb2, action2)
+            q_value = self.critic_target(graph_emb2, action2)
             actor_loss = -q_value.mean()
             self.opt_han.zero_grad()
             self.opt_actor.zero_grad()
