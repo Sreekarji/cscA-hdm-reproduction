@@ -38,13 +38,8 @@ class CSCGraphBuilder:
         self.relay_feat_dim = relay_feat_dim
         self.message_feat_dim = message_feat_dim
 
-        # Fixed topology (computed once, reused every episode)
-        self._csca_idx = torch.arange(n_cscas)
-        self._bs_idx   = torch.arange(n_cscas) % n_base_stations
-        self._msg_idx      = torch.arange(n_messages)
-        self._csca_assign  = torch.arange(n_messages) % n_cscas
-        self._msg_idx2     = torch.arange(n_messages)
-        self._relay_assign = torch.arange(n_messages) % n_relays
+        # Topology resampled per episode in build() — no precomputed buffers
+        pass  # counts stored as self.n_* attributes above
 
     def build(self, system_state: dict = None,
               intent_vectors: list = None) -> HeteroData:
@@ -128,19 +123,43 @@ class CSCGraphBuilder:
         data["base_station"].x = bs_feats
         data["init"].x = init_feat
 
-        # csca -> base_station (fixed round-robin)
+        # csca -> base_station: nearest BS by position if available, else random
+        csca_idx = torch.arange(n_c)
+        if (system_state is not None
+                and "positions" in system_state.get("Rt", {})):
+            pos = system_state["Rt"]["positions"]
+            csca_pos_list = pos.get("cscas", [])
+            bs_pos_list   = pos.get("bs",    [])
+            bs_assign = []
+            for cp in csca_pos_list[:n_c]:
+                if bs_pos_list:
+                    dists = [
+                        ((cp[0] - bp[0])**2 + (cp[1] - bp[1])**2) ** 0.5
+                        for bp in bs_pos_list[:n_b]
+                    ]
+                    bs_assign.append(int(np.argmin(dists)))
+                else:
+                    bs_assign.append(0)
+            while len(bs_assign) < n_c:
+                bs_assign.append(np.random.randint(0, n_b))
+            bs_idx = torch.tensor(bs_assign, dtype=torch.long)
+        else:
+            bs_idx = torch.randint(0, n_b, (n_c,))
         data["csca", "comm_conn", "base_station"].edge_index = torch.stack(
-            [self._csca_idx, self._bs_idx], dim=0
+            [csca_idx, bs_idx], dim=0
         )
 
-        # message -> csca (fixed round-robin)
+        # message -> csca: random per episode
+        msg_idx     = torch.arange(n_m)
+        csca_assign = torch.randint(0, n_c, (n_m,))
         data["message", "comm_req", "csca"].edge_index = torch.stack(
-            [self._msg_idx, self._csca_assign], dim=0
+            [msg_idx, csca_assign], dim=0
         )
 
-        # message -> relay (fixed round-robin)
+        # message -> relay: random per episode
+        relay_assign = torch.randint(0, n_r, (n_m,))
         data["message", "semantic_conn", "relay"].edge_index = torch.stack(
-            [self._msg_idx2, self._relay_assign], dim=0
+            [msg_idx, relay_assign], dim=0
         )
 
         # init -> all other node types

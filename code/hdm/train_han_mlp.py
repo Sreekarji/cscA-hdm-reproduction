@@ -53,8 +53,8 @@ from reproducibility import set_seed
 from config import MP2_ROOT, CHECKPOINT_PATH
 
 LOG_PATH = str(MP2_ROOT / "log.txt")
-CHECKPOINT_PATH = str(CHECKPOINT_PATH)
-os.makedirs(CHECKPOINT_PATH, exist_ok=True)
+CHECKPOINT_DIR = str(CHECKPOINT_PATH)
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 POLICY = "ddpm"   # "mlp" or "ddpm"
@@ -190,7 +190,8 @@ class HANMLPTrainer:
         )
 
         self.gamma = 0.95
-        self.max_grad_norm = 1.0
+        self.max_grad_norm_critic = 1.0
+        self.max_grad_norm_actor  = 0.5
 
         # EMA baseline for reward normalisation (reduces variance without bias)
         self._ema_reward = 0.0
@@ -299,7 +300,7 @@ class HANMLPTrainer:
             critic_loss = nn.MSELoss()(value_pred, r_mb)
             self.opt_critic.zero_grad()
             critic_loss.backward()
-            nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
+            nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm_critic)
             self.opt_critic.step()
             critic_loss_val = critic_loss.item()
 
@@ -314,8 +315,8 @@ class HANMLPTrainer:
             self.opt_han.zero_grad()
             self.opt_actor.zero_grad()
             actor_loss.backward()
-            nn.utils.clip_grad_norm_(self.han.parameters(),   self.max_grad_norm)
-            nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+            nn.utils.clip_grad_norm_(self.han.parameters(),   self.max_grad_norm_actor)
+            nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm_actor)
             self.opt_han.step()
             self.opt_actor.step()
             self.sched_han.step()
@@ -380,7 +381,7 @@ class HANMLPTrainer:
                         "opt_critic": self.opt_critic.state_dict(),
                         "isr":        eval_isr,
                         "episode":    ep,
-                    }, os.path.join(CHECKPOINT_PATH,
+                    }, os.path.join(CHECKPOINT_DIR,
                                     f"han_{POLICY}_tpc{self.tasks_per_csca}{self._ckpt_suffix}_best.pt"))
                     log(f"  -> Best eval ISR: {eval_isr:.3f} (ep {ep})")
 
@@ -421,20 +422,77 @@ def evaluate_policy(trainer, n_episodes: int = 200):
 
 
 def evaluate_static(env, n_tasks, n_relays, n_mcs, n_episodes: int = 200):
-    """Evaluate uniform (static) baseline."""
+    """Evaluate SINR-adaptive static baseline.
+
+    Paper Static baseline: uniform BW + SINR-selected MCS per task.
+    Not fixed-QPSK — that was incorrect.
+    """
+    from mcs_table import select_mcs_for_sinr
+    from sim_channel import (NOISE_PSD_DBM_HZ, INTERFERENCE_CELLS,
+                              INTERFERER_DISTANCE_MIN_KM,
+                              INTERFERER_DISTANCE_MAX_KM,
+                              INTERFERER_POWER_OFFSET_DB)
+
     isrs, delays, dists = [], [], []
+
     for _ in range(n_episodes):
         state = sample_eval_state(env)
+        bw_per_task = env.bandwidth_total / n_tasks
+
+        mcs_tensor = torch.zeros(1, n_tasks, n_mcs, device=DEVICE)
+        for i in range(n_tasks):
+            csca_pos = env.csca_positions[i % len(env.csca_positions)]
+            bs_pos   = env.bs_positions[i % len(env.bs_positions)]
+            base_dist = float(np.sqrt(
+                (csca_pos[0] - bs_pos[0])**2 + (csca_pos[1] - bs_pos[1])**2
+            ))
+            distance = float(np.clip(
+                base_dist + np.random.normal(0, 0.1), 0.1, 3.0
+            ))
+            bw_frac  = 1.0 / n_tasks
+            tx_power = 10 + bw_frac * 13
+
+            noise_dbm = NOISE_PSD_DBM_HZ + 10 * np.log10(bw_per_task)
+            env.channel.bandwidth = bw_per_task
+            env.channel.noise_power_linear = 10 ** ((noise_dbm - 30) / 10)
+
+            rsrp = env.channel.compute_rsrp(tx_power, distance, los=False)
+            interferer_powers = []
+            for _ in range(INTERFERENCE_CELLS):
+                d_int = np.random.uniform(INTERFERER_DISTANCE_MIN_KM,
+                                          INTERFERER_DISTANCE_MAX_KM)
+                interferer_powers.append(
+                    env.channel.compute_rsrp(
+                        tx_power + INTERFERER_POWER_OFFSET_DB, d_int, los=False
+                    )
+                )
+            interference = env.channel.compute_interference(interferer_powers)
+            sinr_lin = env.channel.compute_sinr(rsrp, interference)
+            sinr_db  = 10 * np.log10(max(sinr_lin, 1e-10))
+
+            mcs_entry = select_mcs_for_sinr(sinr_db)
+            mcs_idx   = mcs_entry["mcs_index"]
+            if mcs_idx <= 9:
+                bucket = 0
+            elif mcs_idx <= 16:
+                bucket = 1
+            else:
+                bucket = 2
+            one_hot = torch.zeros(n_mcs, device=DEVICE)
+            one_hot[min(bucket, n_mcs - 1)] = 1.0
+            mcs_tensor[0, i] = one_hot
+
         action = {
             "bandwidth": torch.ones(1, n_tasks, device=DEVICE) / n_tasks,
             "relay":     torch.zeros(1, n_tasks, n_relays, device=DEVICE),
-            "mcs":       torch.full((1, n_tasks, n_mcs), 1.0 / n_mcs, device=DEVICE),
+            "mcs":       mcs_tensor,
         }
         result = env.step(action, state)
         isr, delay, dist = _task_metrics(result["tasks"])
         isrs.append(isr)
         delays.append(delay)
         dists.append(dist)
+
     return (float(np.mean(isrs)), float(np.std(isrs)),
             float(np.mean(delays)), float(np.mean(dists)))
 
@@ -861,7 +919,7 @@ if __name__ == "__main__":
     )
 
     # ---- Load best checkpoint before comparison table (FIX 15) ----
-    best_ckpt_path = os.path.join(CHECKPOINT_PATH, f"han_{POLICY}_tpc{trainer.tasks_per_csca}_best.pt")
+    best_ckpt_path = os.path.join(CHECKPOINT_DIR, f"han_{POLICY}_tpc{trainer.tasks_per_csca}_best.pt")
     if os.path.exists(best_ckpt_path):
         ckpt = torch.load(best_ckpt_path, map_location=DEVICE)
         trainer.han.load_state_dict(ckpt["han"])
