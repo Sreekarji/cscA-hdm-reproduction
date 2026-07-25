@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from torch_geometric.data import HeteroData
 
@@ -104,7 +105,9 @@ class CSCGraphBuilder:
             # Message features: [data_size_norm, semantic_type, delay_urgency, quality_req]
             # Deterministic semantic type: text=0.0, audio=0.5, image=1.0
             type_map = [0.0, 0.5, 1.0]  # text, audio, image
-            semantic_type = torch.tensor([type_map[i % 3] for i in range(n_m)], dtype=torch.float)
+            semantic_type = torch.tensor(
+                [type_map[int(np.random.randint(0, 3))] for _ in range(n_m)],
+                dtype=torch.float)
             message_feats = torch.cat([
                 data_sizes_norm.unsqueeze(1),
                 semantic_type.unsqueeze(1),
