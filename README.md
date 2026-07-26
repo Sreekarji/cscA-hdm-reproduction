@@ -7,7 +7,6 @@ Jan. 2026. DOI: [10.1109/TMC.2025.3590723](https://doi.org/10.1109/TMC.2025.3590
 
 **Student:** Sreekar Balagoni, 3rd-year B.E. ECE, Vasavi College of Engineering,
 Hyderabad (2024–2028)
-
 **Supervisor:** Dr. Sandeep Joshi, Associate Professor, Department of EEE,
 BITS Pilani
 
