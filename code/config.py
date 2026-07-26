@@ -5,7 +5,7 @@ All absolute paths go here. Import this in every module instead of hardcoding.
 from pathlib import Path
 
 # Project roots
-MP2_ROOT     = Path(r"D:\MP2")
+MP2_ROOT     = Path(__file__).resolve().parent.parent
 CODE_ROOT    = MP2_ROOT / "code"
 
 # Model paths

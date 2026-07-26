@@ -1,76 +1,76 @@
 {
   "text": {
     "0": {
-      "similarity_mean": 0.7593442618846893,
-      "similarity_std": 0.05826888531834002,
-      "accuracy_rate": 0.26,
+      "similarity_mean": 0.5215726003050805,
+      "similarity_std": 0.2351910034750884,
+      "accuracy_rate": 0.12,
       "compression_mean": 0.73,
       "compression_std": 0.0,
       "compression_note": "fixed word-truncation proxy (eta=0.73); not a measured ratio",
-      "delay_mean": 0.09060135098621995,
+      "delay_mean": 1.8946230748446366e-05,
       "distortion_mean": 0.7000000000000002,
       "n": 100,
-      "method": "word_truncation_eta073 + MiniLM_cosine"
+      "method": "SST + word_truncation_eta073 + MiniLM_cosine"
     },
     "5": {
-      "similarity_mean": 0.8254675668478012,
-      "similarity_std": 0.04542053295458003,
-      "accuracy_rate": 0.72,
+      "similarity_mean": 0.5942710273712873,
+      "similarity_std": 0.19913959702828835,
+      "accuracy_rate": 0.18,
       "compression_mean": 0.73,
       "compression_std": 0.0,
       "compression_note": "fixed word-truncation proxy (eta=0.73); not a measured ratio",
-      "delay_mean": 0.03955826107473604,
+      "delay_mean": 8.27228219194243e-06,
       "distortion_mean": 0.5,
       "n": 100,
-      "method": "word_truncation_eta073 + MiniLM_cosine"
+      "method": "SST + word_truncation_eta073 + MiniLM_cosine"
     },
     "10": {
-      "similarity_mean": 0.8980271893739701,
-      "similarity_std": 0.039031459805789315,
-      "accuracy_rate": 0.98,
+      "similarity_mean": 0.6217297650873661,
+      "similarity_std": 0.21131684134548526,
+      "accuracy_rate": 0.23,
       "compression_mean": 0.73,
       "compression_std": 0.0,
       "compression_note": "fixed word-truncation proxy (eta=0.73); not a measured ratio",
-      "delay_mean": 0.024560747115912843,
+      "delay_mean": 5.136055667460174e-06,
       "distortion_mean": 0.3,
       "n": 100,
-      "method": "word_truncation_eta073 + MiniLM_cosine"
+      "method": "SST + word_truncation_eta073 + MiniLM_cosine"
     },
     "15": {
-      "similarity_mean": 0.9468404161930084,
-      "similarity_std": 0.02391354435246578,
-      "accuracy_rate": 1.0,
+      "similarity_mean": 0.6977819183468819,
+      "similarity_std": 0.18274674199306573,
+      "accuracy_rate": 0.34,
       "compression_mean": 0.73,
       "compression_std": 0.0,
       "compression_note": "fixed word-truncation proxy (eta=0.73); not a measured ratio",
-      "delay_mean": 0.015918516936077286,
+      "delay_mean": 3.3288233758218807e-06,
       "distortion_mean": 0.15,
       "n": 100,
-      "method": "word_truncation_eta073 + MiniLM_cosine"
+      "method": "SST + word_truncation_eta073 + MiniLM_cosine"
     },
     "20": {
-      "similarity_mean": 0.9758974951505661,
-      "similarity_std": 0.014134132296850057,
-      "accuracy_rate": 1.0,
+      "similarity_mean": 0.7021600492298603,
+      "similarity_std": 0.19280255110691502,
+      "accuracy_rate": 0.4,
       "compression_mean": 0.73,
       "compression_std": 0.0,
       "compression_note": "fixed word-truncation proxy (eta=0.73); not a measured ratio",
-      "delay_mean": 0.012073220876014906,
+      "delay_mean": 2.524708805155993e-06,
       "distortion_mean": 0.07000000000000003,
       "n": 100,
-      "method": "word_truncation_eta073 + MiniLM_cosine"
+      "method": "SST + word_truncation_eta073 + MiniLM_cosine"
     },
     "25": {
-      "similarity_mean": 0.9858564656972885,
-      "similarity_std": 0.015398282070072572,
-      "accuracy_rate": 1.0,
+      "similarity_mean": 0.7251623514294624,
+      "similarity_std": 0.17900284265102698,
+      "accuracy_rate": 0.43,
       "compression_mean": 0.73,
       "compression_std": 0.0,
       "compression_note": "fixed word-truncation proxy (eta=0.73); not a measured ratio",
-      "delay_mean": 0.012073220876014906,
+      "delay_mean": 2.524708805155993e-06,
       "distortion_mean": 0.03,
       "n": 100,
-      "method": "word_truncation_eta073 + MiniLM_cosine"
+      "method": "SST + word_truncation_eta073 + MiniLM_cosine"
     }
   },
   "audio": {
@@ -149,82 +149,82 @@
   },
   "image": {
     "0": {
-      "similarity_mean": 0.5207645863294601,
-      "similarity_std": 0.2142063976942833,
-      "accuracy_rate": 0.08,
-      "compression_mean": 0.6569305694305693,
-      "compression_std": 0.05373080412847707,
-      "compression_note": "word-truncation ratio of BLIP-2 captions",
-      "delay_mean": 1.4406917049446096e-05,
+      "similarity_mean": 0.9404791104793548,
+      "similarity_std": 0.1576928143007341,
+      "accuracy_rate": 0.88,
+      "compression_mean": 0.9579805941185251,
+      "compression_std": 0.10450391362384787,
+      "compression_note": "word-truncation ratio of Qwen2.5-VL captions",
+      "delay_mean": 1.5336395568765196e-05,
       "distortion_mean": 0.7000000000000002,
       "n": 50,
-      "method": "blip2_opt2.7b + word_truncation + MiniLM_cosine",
-      "note": "BLIP-2 fp16 captions; falls back to filename proxy if OOM"
+      "method": "google_landmarks_v2 + qwen2.5vl_3b_caption + word_truncation + MiniLM_cosine",
+      "note": "Qwen2.5-VL-3B captions via Ollama; falls back to filename proxy if unavailable"
     },
     "5": {
-      "similarity_mean": 0.6317405115067959,
-      "similarity_std": 0.24037959777342383,
-      "accuracy_rate": 0.26,
-      "compression_mean": 0.6569305694305693,
-      "compression_std": 0.05373080412847707,
-      "compression_note": "word-truncation ratio of BLIP-2 captions",
-      "delay_mean": 6.290332094614523e-06,
+      "similarity_mean": 0.9562475281953812,
+      "similarity_std": 0.12592013249576636,
+      "accuracy_rate": 0.9,
+      "compression_mean": 0.9579805941185251,
+      "compression_std": 0.10450391362384787,
+      "compression_note": "word-truncation ratio of Qwen2.5-VL captions",
+      "delay_mean": 6.696159971686428e-06,
       "distortion_mean": 0.5,
       "n": 50,
-      "method": "blip2_opt2.7b + word_truncation + MiniLM_cosine",
-      "note": "BLIP-2 fp16 captions; falls back to filename proxy if OOM"
+      "method": "google_landmarks_v2 + qwen2.5vl_3b_caption + word_truncation + MiniLM_cosine",
+      "note": "Qwen2.5-VL-3B captions via Ollama; falls back to filename proxy if unavailable"
     },
     "10": {
-      "similarity_mean": 0.6618574970960617,
-      "similarity_std": 0.2349189564533543,
-      "accuracy_rate": 0.38,
-      "compression_mean": 0.6569305694305693,
-      "compression_std": 0.05373080412847707,
-      "compression_note": "word-truncation ratio of BLIP-2 captions",
-      "delay_mean": 3.905511811023622e-06,
+      "similarity_mean": 0.9605076861381531,
+      "similarity_std": 0.10147476355663093,
+      "accuracy_rate": 0.88,
+      "compression_mean": 0.9579805941185251,
+      "compression_std": 0.10450391362384787,
+      "compression_note": "word-truncation ratio of Qwen2.5-VL captions",
+      "delay_mean": 4.1574803149606285e-06,
       "distortion_mean": 0.30000000000000004,
       "n": 50,
-      "method": "blip2_opt2.7b + word_truncation + MiniLM_cosine",
-      "note": "BLIP-2 fp16 captions; falls back to filename proxy if OOM"
+      "method": "google_landmarks_v2 + qwen2.5vl_3b_caption + word_truncation + MiniLM_cosine",
+      "note": "Qwen2.5-VL-3B captions via Ollama; falls back to filename proxy if unavailable"
     },
     "15": {
-      "similarity_mean": 0.7550150698423386,
-      "similarity_std": 0.1728600689876923,
-      "accuracy_rate": 0.46,
-      "compression_mean": 0.6569305694305693,
-      "compression_std": 0.05373080412847707,
-      "compression_note": "word-truncation ratio of BLIP-2 captions",
-      "delay_mean": 2.531272994849154e-06,
+      "similarity_mean": 0.9829860925674438,
+      "similarity_std": 0.04593396461378871,
+      "accuracy_rate": 1.0,
+      "compression_mean": 0.9579805941185251,
+      "compression_std": 0.10450391362384787,
+      "compression_note": "word-truncation ratio of Qwen2.5-VL captions",
+      "delay_mean": 2.6945809300007116e-06,
       "distortion_mean": 0.15000000000000002,
       "n": 50,
-      "method": "blip2_opt2.7b + word_truncation + MiniLM_cosine",
-      "note": "BLIP-2 fp16 captions; falls back to filename proxy if OOM"
+      "method": "google_landmarks_v2 + qwen2.5vl_3b_caption + word_truncation + MiniLM_cosine",
+      "note": "Qwen2.5-VL-3B captions via Ollama; falls back to filename proxy if unavailable"
     },
     "20": {
-      "similarity_mean": 0.7653837209939957,
-      "similarity_std": 0.1470392201687416,
-      "accuracy_rate": 0.5,
-      "compression_mean": 0.6569305694305693,
-      "compression_std": 0.05373080412847707,
-      "compression_note": "word-truncation ratio of BLIP-2 captions",
-      "delay_mean": 1.9198156516103477e-06,
+      "similarity_mean": 0.9870493960380554,
+      "similarity_std": 0.034898094928366964,
+      "accuracy_rate": 1.0,
+      "compression_mean": 0.9579805941185251,
+      "compression_std": 0.10450391362384787,
+      "compression_note": "word-truncation ratio of Qwen2.5-VL captions",
+      "delay_mean": 2.043674725907789e-06,
       "distortion_mean": 0.07,
       "n": 50,
-      "method": "blip2_opt2.7b + word_truncation + MiniLM_cosine",
-      "note": "BLIP-2 fp16 captions; falls back to filename proxy if OOM"
+      "method": "google_landmarks_v2 + qwen2.5vl_3b_caption + word_truncation + MiniLM_cosine",
+      "note": "Qwen2.5-VL-3B captions via Ollama; falls back to filename proxy if unavailable"
     },
     "25": {
-      "similarity_mean": 0.7713941752910614,
-      "similarity_std": 0.1508744905297907,
-      "accuracy_rate": 0.46,
-      "compression_mean": 0.6569305694305693,
-      "compression_std": 0.05373080412847707,
-      "compression_note": "word-truncation ratio of BLIP-2 captions",
-      "delay_mean": 1.9198156516103477e-06,
+      "similarity_mean": 0.9831674289703369,
+      "similarity_std": 0.05714096149145556,
+      "accuracy_rate": 0.98,
+      "compression_mean": 0.9579805941185251,
+      "compression_std": 0.10450391362384787,
+      "compression_note": "word-truncation ratio of Qwen2.5-VL captions",
+      "delay_mean": 2.043674725907789e-06,
       "distortion_mean": 0.03,
       "n": 50,
-      "method": "blip2_opt2.7b + word_truncation + MiniLM_cosine",
-      "note": "BLIP-2 fp16 captions; falls back to filename proxy if OOM"
+      "method": "google_landmarks_v2 + qwen2.5vl_3b_caption + word_truncation + MiniLM_cosine",
+      "note": "Qwen2.5-VL-3B captions via Ollama; falls back to filename proxy if unavailable"
     }
   },
   "paper_targets": {
@@ -233,7 +233,7 @@
     "image_compression": 0.21
   },
   "notes": [
-    "Image uses filename-based caption proxy (Qwen2-VL vision not available)",
+    "Image uses Qwen2.5-VL-3B captions via Ollama on Google Landmarks v2",
     "Compression uses word-truncation at eta=0.73",
     "Similarity via MiniLM cosine; word-overlap Jaccard fallback"
   ]

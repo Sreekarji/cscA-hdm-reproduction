@@ -322,3 +322,27 @@ Three specific quantitative claims do not reproduce: the delay advantage
 structural explanation in Section 4), and the denoising-step ordering
 (Fig. 12(a), flat within noise). The headline "+42.19% ISR" is regime-dependent
 in our testbed and ranges from -8% to +704% depending solely on task count.
+
+---
+
+## 10. Additional Deviations (Post-Run Audit)
+
+### 10.1 Quality Intent Normalisation (A2 + A1)
+**Paper:** Quality intent drives semantic accuracy requirement
+**Code:** `intents_from_state()` passes raw `quality_intents` (range 0.10–0.40) to HAN without normalisation, while delay urgency is range-normalised to [0,1]. Additionally, `env.step()` converts quality intent to a distortion threshold via `1.0 - q`, but HAN receives raw `q` directly. Both inputs to HAN have asymmetric ranges and the quality gradient signal is semantically inverted relative to how `compute_isr` uses it.
+**Reason:** Discovered post-run. Fixing would require full re-run and invalidate v2.0-final results. HDM still beats all baselines despite this bias — the graph attention learns to compensate. Documented as known deviation.
+
+### 10.2 INTERFERENCE_CELLS=3 vs Paper's 6
+**Paper line 697:** "inter-cell interference is mainly determined by the six cells with the highest RSRP"
+**Code:** `INTERFERENCE_CELLS = 3` (sim_channel.py)
+**Reason:** Reduced interference complexity during environment calibration. Fewer interference cells means achievable ISR is higher. Results are internally consistent but not directly comparable to paper's absolute ISR values.
+
+### 10.3 BLER Curve Parameters
+**Paper:** Does not specify BLER slope or ceiling numerically
+**Code:** `BLER_SLOPE = 0.76`, `BLER_CEIL = 0.95` — empirically calibrated
+**Reason:** Paper references 3GPP link-level curves without providing exact fit parameters. Values were tuned so that medium-difficulty intents are achievable.
+
+### 10.4 Urgency Range Too Narrow
+**Code:** `di = delay_intents[i] / 10.0` gives range [0.05, 0.25] for medium difficulty. The urgency term `(1.0 - di)` has range ~0.20 instead of ~1.0.
+**Impact:** Limits HAN's ability to differentiate tasks by delay urgency.
+**Reason:** Discovered post-run. Fixing would require re-calibration and full re-run.

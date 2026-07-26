@@ -23,6 +23,7 @@ Outputs:
 Run: python code/experiments/multimodal_eval.py
 """
 import os
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 import sys
 import json
@@ -48,7 +49,8 @@ RESULTS_DIR = str(MP2_ROOT / "results" / "final")
 LOG_PATH    = str(MP2_ROOT / "log.txt")
 MINIML_DIR  = str(MINIML_PATH)
 AUDIO_DIR   = str(MP2_ROOT / "data" / "raw" / "audio" / "wav")
-IMAGE_DIR   = str(MP2_ROOT / "data" / "raw" / "images")
+IMAGE_DIR   = str(MP2_ROOT / "data" / "raw" / "landmarks")
+_IMAGE_EXTS = (".jpg", ".jpeg", ".png")
 TEXT_DIR    = str(MP2_ROOT / "data" / "raw" / "txt" / "en")
 WHISPER_DIR = str(MP2_ROOT / "models" / "whisper")
 SNR_RANGE   = [0, 5, 10, 15, 20, 25]
@@ -58,6 +60,38 @@ N_IMAGES    = 50
 COMPRESSION_ETA = 0.73
 
 os.makedirs(RESULTS_DIR, exist_ok=True)
+
+
+def ensure_landmarks(n=N_IMAGES):
+    """
+    Check that landmark images exist. Pre-downloaded to data/raw/landmarks/.
+    Falls back to copying from images/ if landmarks/ is empty.
+    """
+    os.makedirs(IMAGE_DIR, exist_ok=True)
+    existing = [
+        fp for ext in _IMAGE_EXTS
+        for fp in glob.glob(os.path.join(IMAGE_DIR, "**", f"*{ext}"), recursive=True)
+    ]
+    if len(existing) >= n:
+        log(f"[image] {len(existing)} landmark images present.")
+        return existing
+
+    log(f"[image] Only {len(existing)} landmarks found. Falling back to images/.")
+    fallback = str(MP2_ROOT / "data" / "raw" / "images")
+    if os.path.isdir(fallback):
+        import shutil
+        for fp in glob.glob(os.path.join(fallback, "**", f"*"), recursive=True):
+            if any(fp.lower().endswith(ext) for ext in _IMAGE_EXTS):
+                dst = os.path.join(IMAGE_DIR, os.path.basename(fp))
+                if not os.path.exists(dst):
+                    shutil.copy2(fp, dst)
+
+    return [
+        fp for ext in _IMAGE_EXTS
+        for fp in glob.glob(os.path.join(IMAGE_DIR, "**", f"*{ext}"), recursive=True)
+    ]
+
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -230,24 +264,21 @@ def compression_ratio_bits(original_source_bytes: int,
 # ---------------------------------------------------------------------------
 # Section 5: Text modality
 # ---------------------------------------------------------------------------
-def load_europarl_sentences(n=N_SENTENCES):
+def load_sst_sentences(n=N_SENTENCES):
     """
-    Load up to n sentences from data/raw/txt/en/*.txt (one sentence per file).
-    Falls back to hardcoded sample sentences if directory empty or missing.
+    Load sentences from Stanford Sentiment Treebank (pre-downloaded to disk).
+    Falls back to hardcoded sample sentences if file missing.
+    Paper dataset: Stanford Sentiment Treebank (Section VI-A-2).
     """
+    sst_path = os.path.join(BASE, "data", "raw", "txt", "sst", "sentences.json")
     sentences = []
-    if os.path.isdir(TEXT_DIR):
-        files = sorted(glob.glob(os.path.join(TEXT_DIR, "*.txt")))[:n]
-        for fp in files:
-            try:
-                with open(fp, encoding="utf-8", errors="ignore") as f:
-                    line = f.read().strip()
-                    if line:
-                        sentences.append(line)
-            except Exception:
-                continue
-    if not sentences:
-        log("[text] No Europarl files found. Using fallback sentences.")
+    try:
+        import json as _json
+        with open(sst_path, "r", encoding="utf-8") as f:
+            sentences = _json.load(f)[:n]
+        log(f"[text] Loaded {len(sentences)} SST sentences from {sst_path}")
+    except Exception as e:
+        log(f"[text] SST file not found ({e}). Using fallback sentences.")
         sentences = [
             "The semantic communication system transmits information efficiently.",
             "Deep learning enables intelligent resource allocation in wireless networks.",
@@ -256,7 +287,7 @@ def load_europarl_sentences(n=N_SENTENCES):
             "Semantic similarity is preserved after transmission through the channel.",
         ] * 20
         sentences = sentences[:n]
-    log(f"[text] Loaded {len(sentences)} sentences.")
+        log(f"[text] Loaded {len(sentences)} fallback sentences.")
     return sentences
 
 
@@ -286,7 +317,7 @@ def evaluate_text(sentences, snr_range):
             "delay_mean":       snr_metrics[snr_db]["delay_mean"],
             "distortion_mean":  snr_metrics[snr_db]["distortion_mean"],
             "n":                len(sentences),
-            "method":           "word_truncation_eta073 + MiniLM_cosine",
+            "method":           "SST + word_truncation_eta073 + MiniLM_cosine",
         }
     return results
 
@@ -363,53 +394,42 @@ def evaluate_audio(audio_files, snr_range):
 # ---------------------------------------------------------------------------
 def caption_images(image_files, n=N_IMAGES):
     """
-    Generate captions using BLIP-2 OPT-2.7B.
-    Runs in ~5GB VRAM (fp16). Downloads ~10GB on first run to HF cache.
-    Unloads model after captioning to free VRAM for MiniLM.
-    Falls back to filename proxy if model unavailable or OOM.
+    Generate captions using Qwen2.5-VL-3B via Ollama.
+    Replaces BLIP-2 OPT-2.7B.
+    Paper dataset: Google Landmarks v2 (Section VI-A-2).
+    Falls back to filename proxy if Ollama unavailable.
     """
     captions = []
     try:
-        from transformers import Blip2Processor, Blip2ForConditionalGeneration
-        from PIL import Image as PILImage
-
-        log("[image] Loading BLIP-2 OPT-2.7B (fp16, GPU) ...")
-        processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
-        model = Blip2ForConditionalGeneration.from_pretrained(
-            "Salesforce/blip2-opt-2.7b",
-            torch_dtype=torch.float16,
-            device_map="auto",
-        )
-        model.eval()
-        log(f"[image] Captioning {min(n, len(image_files))} images ...")
-
+        import ollama
+        log(f"[image] Captioning {min(n, len(image_files))} images via qwen2.5vl:3b ...")
         for fp in image_files[:n]:
             try:
-                img = PILImage.open(fp).convert("RGB")
-                inputs = processor(images=img, return_tensors="pt").to(
-                    DEVICE, torch.float16)
-                with torch.no_grad():
-                    ids = model.generate(**inputs, max_new_tokens=50)
-                caption = processor.decode(ids[0], skip_special_tokens=True).strip()
-                captions.append(caption if caption else f"image {os.path.basename(fp)}")
+                resp = ollama.chat(
+                    model="qwen2.5vl:3b",
+                    messages=[{
+                        "role": "user",
+                        "content": "Describe this image in one concise sentence.",
+                        "images": [fp],
+                    }],
+                    options={"temperature": 0},
+                )
+                caption = resp["message"]["content"].strip()
+                captions.append(
+                    caption if caption else
+                    f"An image showing {os.path.splitext(os.path.basename(fp))[0].replace('_', ' ')}"
+                )
             except Exception as e:
                 log(f"  [image] Failed on {os.path.basename(fp)}: {e}")
-                name = os.path.splitext(os.path.basename(fp))[0].replace("_", " ")
+                name = os.path.splitext(os.path.basename(fp))[0].replace("_", " ").replace("-", " ")
                 captions.append(f"An image showing {name}")
-
-        del model, processor
-        gc.collect()
-        torch.cuda.empty_cache()
-        log(f"[image] Generated {len(captions)} BLIP-2 captions. Model unloaded.")
-
-    except Exception as e:
-        log(f"[image] BLIP-2 unavailable: {e}. Using filename proxy.")
-        captions = []
+        log(f"[image] Generated {len(captions)} Qwen2.5-VL captions.")
+    except ImportError:
+        log("[image] ollama not available. Using filename proxy.")
         for fp in image_files[:n]:
             name = os.path.splitext(os.path.basename(fp))[0].replace("_", " ").replace("-", " ")
             captions.append(f"An image showing {name}")
         log(f"[image] Generated {len(captions)} filename-based captions (fallback).")
-
     return captions
 
 
@@ -439,12 +459,12 @@ def evaluate_image(image_files, snr_range):
             "accuracy_rate":    acc,
             "compression_mean": float(np.mean(compression_ratios)),
             "compression_std":  float(np.std(compression_ratios)),
-            "compression_note": "word-truncation ratio of BLIP-2 captions",
+            "compression_note": "word-truncation ratio of Qwen2.5-VL captions",
             "delay_mean":       snr_metrics[snr_db]["delay_mean"],
             "distortion_mean":  snr_metrics[snr_db]["distortion_mean"],
             "n":                len(captions),
-            "method":           "blip2_opt2.7b + word_truncation + MiniLM_cosine",
-            "note":             "BLIP-2 fp16 captions; falls back to filename proxy if OOM",
+            "method":           "google_landmarks_v2 + qwen2.5vl_3b_caption + word_truncation + MiniLM_cosine",
+            "note":             "Qwen2.5-VL-3B captions via Ollama; falls back to filename proxy if unavailable",
         }
     return results
 
@@ -461,9 +481,9 @@ def generate_fig6(text_results, audio_results, image_results):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
     modalities = [
-        ("Text (Europarl)",            text_results,  "royalblue", "o"),
+        ("Text (SST)",            text_results,  "royalblue", "o"),
         ("Audio (VoxCeleb -> Whisper)", audio_results, "seagreen",  "s"),
-        ("Image (Oxford, filename proxy)", image_results, "tomato", "^"),
+        ("Image (Google Landmarks v2, Qwen2.5-VL)", image_results, "tomato", "^"),
     ]
 
     # ax1: semantic similarity vs SNR
@@ -530,7 +550,7 @@ def save_results(text_results, audio_results, image_results):
             "image_compression": 0.21,
         },
         "notes": [
-            "Image uses filename-based caption proxy (Qwen2-VL vision not available)",
+            "Image uses Qwen2.5-VL-3B captions via Ollama on Google Landmarks v2",
             "Compression uses word-truncation at eta=0.73",
             "Similarity via MiniLM cosine; word-overlap Jaccard fallback",
         ],
@@ -587,9 +607,10 @@ if __name__ == "__main__":
     log(f"RESULTS_DIR: {RESULTS_DIR}")
     log("=" * 60)
 
-    sentences   = load_europarl_sentences(N_SENTENCES)
+    sentences   = load_sst_sentences(N_SENTENCES)
     audio_files = sorted(glob.glob(os.path.join(AUDIO_DIR, "**", "*.wav"), recursive=True))
-    image_files = sorted(glob.glob(os.path.join(IMAGE_DIR, "**", "*.jpg"), recursive=True))
+    image_files = ensure_landmarks(N_IMAGES)
+    image_files = sorted(image_files)
     log(f"Data: {len(sentences)} sentences, {len(audio_files)} audio, {len(image_files)} images")
 
     try:

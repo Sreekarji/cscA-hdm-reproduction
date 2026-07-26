@@ -162,7 +162,7 @@ class LogPiTrainer(HANMLPTrainer):
         critic_loss = nn.MSELoss()(value_pred, r_mb)
         self.opt_critic.zero_grad()
         critic_loss.backward()
-        nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
+        nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm_critic)
         self.opt_critic.step()
 
         # Actor + HAN update — Eq. 33

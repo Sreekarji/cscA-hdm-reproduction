@@ -348,11 +348,11 @@ class HANMLPTrainer:
             nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm_actor)
             self.opt_han.step()
             self.opt_actor.step()
+            self.sched_han.step()
+            self.sched_actor.step()
             a_loss_val = actor_loss.item()
         else:
             a_loss_val = 0.0
-        self.sched_han.step()
-        self.sched_actor.step()
         self.opt_critic.zero_grad()
 
         # ---- Polyak averaging for target critic ----
