@@ -1,0 +1,27 @@
+# Core
+torch>=2.5.0
+torch-geometric
+numpy
+matplotlib
+tqdm
+scipy
+
+# HuggingFace
+datasets
+transformers
+
+# NLP / similarity
+sentence-transformers
+pydantic>=1.10
+
+# Audio
+openai-whisper
+
+# LAM / Ollama
+ollama>=0.5.0
+
+# Image
+Pillow
+
+# Utilities
+pandas
