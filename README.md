@@ -1,10 +1,15 @@
 # CSCA-SemCom Reproduction
 
-Reproduction of Sun et al., "Edge Large AI Model Agent-Empowered Cognitive Multimodal Semantic Communication," IEEE TMC, Vol. 25, No. 1, January 2026.
+Reproduction of Sun et al., "Edge Large AI Model Agent-Empowered Cognitive Multimodal Semantic Communication," IEEE Transactions on Mobile Computing, Vol. 25, No. 1, January 2026. DOI: 10.1109/TMC.2025.3590723
 
 **Student:** Sreekar Balagoni, 2nd-year B.E. ECE, Vasavi College of Engineering, Hyderabad (2024–2028)  
-**Supervisor:** Dr. Sandeep Joshi, BITS Pilani  
-**Paper:** Sun et al., "Edge Large AI Model Agent-Empowered Cognitive Multimodal Semantic Communication," IEEE Transactions on Mobile Computing, Vol. 25, No. 1, January 2026. DOI: 10.1109/TMC.2025.3590723
+**Supervisor:** Dr. Sandeep Joshi, BITS Pilani
+
+## About this reproduction
+
+This repository re-implements the HDM model from scratch — the Heterogeneous Attention Network (HAN) paired with a DDPM-based policy for wireless communication planning — and evaluates it against the SAC, PPO, and Actor-Critic baselines described in the paper. The LAM left-brain (LLaVA-NeXT) is not included in the main RL runs; intents are sampled synthetically. A working LAM demo using Qwen2.5-VL-3B is available via `lam_intent_demo.py`.
+
+The core qualitative finding reproduces: intent-aware per-task policy generation strongly outperforms uniform allocation under resource competition (+10% ISR at tpc=4, +11% at tpc=10). The HAN graph attention provides +15.9% improvement over a flat MLP encoder, and the DDPM diffusion policy provides +14.1% over a plain MLP actor at high load. Three quantitative claims do not fully reproduce — delay ordering, DDPM advantage at tpc=4, and 10-CSCA scaling — with structural explanations documented in [AUDIT_NOTES.md](AUDIT_NOTES.md).
 
 ## Results
 
@@ -112,13 +117,13 @@ python code/experiments/lam_intent_demo.py --text "send it accurately within 2 s
 
 ## Documentation
 
-- [AUDIT_NOTES.md](AUDIT_NOTES.md) — Complete deviation documentation
+- [AUDIT_NOTES.md](AUDIT_NOTES.md) — Complete deviation documentation, bug fixes, ablation results
 - [docs/project_context.md](docs/project_context.md) — Full project history
 
 ## Known Limitations
 
 1. **Single scale:** Only 5-CSCA results are valid. 10-CSCA scaling fails.
-2. **No LAM in main results:** Uses synthetic intents, not real LAM cognition.
+2. **No LAM:** Uses synthetic intents, not real LAM cognition.
 3. **SAC baseline:** Standard SAC, not intent-aware (paper's SAC is from Nahum et al. [8]).
 4. **Single seed:** All results use seed=42, no variance estimation.
 
