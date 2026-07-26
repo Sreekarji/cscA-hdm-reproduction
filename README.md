@@ -4,7 +4,7 @@ Reproduction of Sun et al., "Edge Large AI Model Agent-Empowered Cognitive Multi
 
 **Student:** Sreekar Balagoni, 2nd-year B.E. ECE, Vasavi College of Engineering, Hyderabad (2024–2028)  
 **Supervisor:** Dr. Sandeep Joshi, BITS Pilani  
-**Paper:** [IEEE TMC Vol. 25, No. 1, January 2026](https://doi.org/10.1109/TMC.2025.1234567)
+**Paper:** Sun et al., IEEE Transactions on Mobile Computing, Vol. 25, No. 1, January 2026
 
 ## Results
 
