@@ -224,9 +224,8 @@ class HANMLPTrainer:
 
         # EMA baseline for reward normalisation (reduces variance without bias)
         self._ema_reward = 0.0
-        self._ema_alpha = 0.05   # smooth over ~20 episodes
+        self._ema_alpha = 0.05
 
-        # FIX 17a: Replay buffer for critic
         self.replay = []
         self.replay_cap = 1000
         self.critic_batch = 256
@@ -237,7 +236,6 @@ class HANMLPTrainer:
         self.tau_polyak = 0.005
         self.actor_update_every = 2
 
-        # FIX 17c: LR decay for actor and HAN
         self.sched_han   = optim.lr_scheduler.StepLR(self.opt_han,   step_size=300, gamma=0.7)
         self.sched_actor = optim.lr_scheduler.StepLR(self.opt_actor, step_size=300, gamma=0.7)
 
@@ -270,8 +268,6 @@ class HANMLPTrainer:
             sigma = max(0.02, 0.10 * (1.0 - self.episode / 1000))
         else:
             sigma = max(0.02, 0.2 * (1.0 - self.episode / 1000))
-        # FIX B (cont.): perturb in logit space so exploration actually
-        # explores different allocations rather than collapsing to uniform.
         bw_logits = torch.log(action[:, :self.n_tasks].clamp_min(1e-8))
         bw_logits = bw_logits + torch.randn_like(bw_logits) * sigma * 3.0
         bw = torch.softmax(bw_logits, dim=-1)

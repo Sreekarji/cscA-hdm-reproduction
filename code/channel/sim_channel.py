@@ -42,13 +42,12 @@ INTERFERER_POWER_OFFSET_DB = -1
 # BW allocation
 # ---------------------------------------------------------------------------
 
-# FIX F: Eq. 19-20 attenuation factors, single source of truth.
 OMEGA1_DELAY   = 0.05
 OMEGA2_QUALITY = 0.02
 
-BLER_CEIL         = 0.95   # FIX A3: saturating BLER ceiling
-BLER_SLOPE        = 0.76   # bler≈0.30 at overreach=1.5, 0.50 at 2.0
-MIN_BW_SHARE_FRAC = 0.10   # FIX BW-FLOOR: each task keeps ≥10% of fair share
+BLER_CEIL         = 0.95
+BLER_SLOPE        = 0.76
+MIN_BW_SHARE_FRAC = 0.10
 
 
 class WirelessChannel:
@@ -372,7 +371,6 @@ class MultiCSCAEnvironment:
             quality_intents = np.random.uniform(0.92, 1.00, self.n_tasks).tolist()
             data_sizes      = (np.random.rand(self.n_tasks) * 0.5e6 + 0.1e6).tolist()
         elif self.difficulty == "medium":
-            # FIX INTENT: delay must scale with system load
             _n = self.n_tasks
             delay_intents   = np.random.uniform(0.50, 2.50, _n).tolist()
             quality_intents = np.random.uniform(0.10, 0.40, _n).tolist()
@@ -548,7 +546,7 @@ class MultiCSCAEnvironment:
             # Hook MCS action from HDM — override SINR-selected MCS
             overreach, bler = 0.0, 0.0
             if "mcs" in action and action["mcs"] is not None:
-                mcs_probs = action["mcs"][0, min(i, action["mcs"].shape[1]-1), :]   # FIX 14b: per-task
+                mcs_probs = action["mcs"][0, min(i, action["mcs"].shape[1]-1), :]
                 mcs_choice_idx = int(mcs_probs.argmax().item())       # 0, 1, or 2
                 mcs_index_map = [0, 10, 20]   # QPSK low, 16QAM mid, 64QAM high
                 chosen_mcs_idx = mcs_index_map[min(mcs_choice_idx, len(mcs_index_map)-1)]
@@ -558,10 +556,8 @@ class MultiCSCAEnvironment:
                 metrics["mcs_index"]  = chosen_mcs_idx
                 metrics["modulation"] = chosen_mcs["modulation"]
                 metrics["rate_bps"]   = override_rate
-                # FIX A: write the override back into metrics
                 metrics["delay_s"]    = SCt["data_sizes"][i] / override_rate
 
-                # FIX A2: an aggressive MCS must not be free
                 shannon_eff = np.log2(1.0 + 10 ** (metrics["sinr_db"] / 10.0))
                 overreach = chosen_mcs["spectral_efficiency"] / max(0.95 * shannon_eff, 1e-6)
                 if overreach > 1.0:
