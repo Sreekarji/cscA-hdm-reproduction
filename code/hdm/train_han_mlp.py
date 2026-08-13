@@ -47,10 +47,10 @@ sys.path.insert(0, _CODE_ROOT)
 from mlp_policy import MLPActor, MLPCritic
 from ddpm_policy import DDPMActor
 from han_network import HANNetwork
-from sim_channel import MultiCSCAEnvironment
+from sim_channel import MultiCSCAEnvironment, normalise_intents
 from cscqi import compute_cscqi, compute_isr
 from reproducibility import set_seed
-from config import MP2_ROOT, CHECKPOINT_PATH
+from config import MP2_ROOT, CHECKPOINT_PATH, LAM_TRAINING_MODE, USE_ENTROPY_REG, ENTROPY_COEFF
 
 LOG_PATH = str(MP2_ROOT / "log.txt")
 CHECKPOINT_DIR = str(CHECKPOINT_PATH)
@@ -58,6 +58,27 @@ os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 POLICY = "ddpm"   # "mlp" or "ddpm"
+
+# The relay head is dead weight: sim_channel.step() selects relays with the
+# heuristic relay_select() and never reads action["relay"], so those
+# n_tasks*n_relays outputs receive no gradient signal tied to the reward while
+# still inflating the action space (180 -> 80 dims at tpc=4). Set True only to
+# reproduce the pre-fix action layout.
+USE_RELAY_ACTION = False
+
+
+def compute_action_dim(n_tasks, n_relays, n_mcs, use_relay=None):
+    """Single source of truth for the flat action width.
+
+    Layout when use_relay: [BW: n_tasks | relay: n_tasks*n_relays | MCS: n_tasks*n_mcs]
+    Layout otherwise:      [BW: n_tasks | MCS: n_tasks*n_mcs]
+    """
+    if use_relay is None:
+        use_relay = USE_RELAY_ACTION
+    dim = n_tasks + n_tasks * n_mcs
+    if use_relay:
+        dim += n_tasks * n_relays
+    return dim
 
 
 def _act(actor, ge, me, deterministic=False):
@@ -95,21 +116,29 @@ def sample_eval_state(env):
     n = env.n_tasks
     for i in range(n):
         ds_norm = min(state["SCt"]["data_sizes"][i] / 6e5, 1.0)
-        di = state["SCt"]["delay_intents"][i] / 10.0
-        qi = state["SCt"]["quality_intents"][i]
+        di, qi = normalise_intents(state["SCt"]["delay_intents"][i],
+                                   state["SCt"]["quality_intents"][i])
         urgency = (1.0 - di) * 0.5 + qi * 0.5
         state["SCt"]["message_features"][i] = [ds_norm, di, qi, urgency]
     return state
 
 
 def intents_from_state(state):
-    """Intent vectors the HAN sees = the intents the env scores."""
-    d = np.array(state["SCt"]["delay_intents"])
-    q = np.array(state["SCt"]["quality_intents"])
-    d_arr = np.array(d)
-    d_range = d_arr.max() - d_arr.min() + 1e-8
-    urgency = 1.0 - (d_arr - d_arr.min()) / d_range
-    return np.stack([urgency, q], axis=1).tolist()
+    """Intent vectors the HAN sees = the intents the env scores.
+
+    Uses the FIXED bounds from sim_channel.normalise_intents, not a per-episode
+    min/max rescale. A per-episode rescale made urgency depend on what else was
+    drawn that episode (and collapsed to a constant once every delay intent
+    exceeded the old hardcoded denominator), so the HAN could not learn a stable
+    feature -> deadline mapping.
+    """
+    d = state["SCt"]["delay_intents"]
+    q = state["SCt"]["quality_intents"]
+    out = []
+    for di_raw, qi_raw in zip(d, q):
+        di, qi = normalise_intents(di_raw, qi_raw)
+        out.append([1.0 - di, qi])
+    return out
 
 
 def flatten_state(state, n_tasks, n_cscas=5, n_relays=5):
@@ -139,11 +168,24 @@ def raw_state_dim(n_tasks, n_cscas=5, n_relays=5):
 
 def parse_action(action, n_tasks, n_relays, n_mcs):
     """Split flat action tensor into bandwidth/relay/mcs dicts.
-    Layout: [BW: n_tasks | relay: n_tasks*n_relays | MCS: n_tasks*n_mcs]
+
+    Layout with USE_RELAY_ACTION:
+        [BW: n_tasks | relay: n_tasks*n_relays | MCS: n_tasks*n_mcs]
+    Layout without:
+        [BW: n_tasks | MCS: n_tasks*n_mcs]
+
+    The returned dict always carries a "relay" key so env.step()'s contract is
+    unchanged; when the relay head is disabled it is an all-zero tensor (which
+    env.step() ignores anyway — it uses the heuristic relay_select()).
     """
-    bw    = action[:, :n_tasks]
-    relay = action[:, n_tasks: n_tasks + n_tasks * n_relays].reshape(1, n_tasks, n_relays)
-    mcs   = action[:, n_tasks + n_tasks * n_relays:].reshape(1, n_tasks, n_mcs)
+    bw = action[:, :n_tasks]
+    if USE_RELAY_ACTION:
+        relay = action[:, n_tasks: n_tasks + n_tasks * n_relays].reshape(1, n_tasks, n_relays)
+        mcs   = action[:, n_tasks + n_tasks * n_relays:].reshape(1, n_tasks, n_mcs)
+    else:
+        relay = torch.zeros(1, n_tasks, n_relays, device=action.device,
+                            dtype=action.dtype)
+        mcs   = action[:, n_tasks:].reshape(1, n_tasks, n_mcs)
     return {"bandwidth": bw, "relay": relay, "mcs": mcs}
 
 
@@ -173,9 +215,7 @@ class HANMLPTrainer:
         self.n_mcs = 3
         self.tasks_per_csca = tasks_per_csca
         self.n_tasks = self.n_cscas * tasks_per_csca
-        self.action_dim = (self.n_tasks
-                           + self.n_tasks * self.n_relays
-                           + self.n_tasks * self.n_mcs)
+        self.action_dim = compute_action_dim(self.n_tasks, self.n_relays, self.n_mcs)
         self.difficulty = difficulty
 
         # HAN
@@ -244,6 +284,49 @@ class HANMLPTrainer:
         self.history = []
         self._ckpt_suffix = ""
 
+        # LAM intent provider (instantiated lazily on first training episode)
+        self._lam_provider = None
+        self._lam_training_mode = LAM_TRAINING_MODE
+
+    # ------------------------------------------------------------------
+    def _get_lam_provider(self):
+        """Lazy-load LAMIntentProvider on first call (avoids import at module load)."""
+        if self._lam_provider is None:
+            # Insert lam/ onto path only when needed
+            _lam_path = os.path.join(_CODE_ROOT, "lam")
+            if _lam_path not in sys.path:
+                sys.path.insert(0, _lam_path)
+            from lam_provider import LAMIntentProvider
+            self._lam_provider = LAMIntentProvider()
+            log("LAM training mode enabled — LAMIntentProvider initialised.")
+        return self._lam_provider
+
+    def _inject_lam_intents(self, state: dict) -> float:
+        """Replace synthetic intents in state with LAM-parsed ones.
+
+        Calls lam_provider.get_batch(n_tasks), overwrites delay_intents,
+        quality_intents, data_sizes (scaled by compression_ratio), and
+        rebuilds message_features so HAN sees consistent normalised features.
+
+        Returns mean compression_ratio across tasks (logged per episode).
+        """
+        provider = self._get_lam_provider()
+        intents  = provider.get_batch(self.n_tasks)
+        SCt = state["SCt"]
+        ratios = []
+        for i, intent in enumerate(intents):
+            SCt["delay_intents"][i]   = intent["delay_seconds"]
+            SCt["quality_intents"][i] = intent["quality_score"]
+            SCt["data_sizes"][i]     *= intent["compression_ratio"]
+            ratios.append(intent["compression_ratio"])
+            # Rebuild message_features[i] to stay consistent with normalised intents
+            ds_norm = min(SCt["data_sizes"][i] / 6e5, 1.0)
+            di, qi  = normalise_intents(SCt["delay_intents"][i],
+                                        SCt["quality_intents"][i])
+            urgency = (1.0 - di) * 0.5 + qi * 0.5
+            SCt["message_features"][i] = [ds_norm, di, qi, urgency]
+        return float(sum(ratios) / len(ratios)) if ratios else 1.0
+
     # ------------------------------------------------------------------
     def train_step(self):
         self.han.train()
@@ -251,10 +334,15 @@ class HANMLPTrainer:
         self.critic.train()
         self.episode += 1
         if hasattr(self.actor, "temp_scale"):
-            frac = min(1.0, self.episode / 1000.0)
-            self.actor.temp_scale.fill_(2.0 + (0.5 - 2.0) * frac)
+            self.actor.temp_scale.fill_(1.0)
 
         state = sample_eval_state(self.env)
+
+        # --- LAM intent injection (when LAM_TRAINING_MODE = True) ---
+        lam_comp_ratio = None
+        if self._lam_training_mode:
+            lam_comp_ratio = self._inject_lam_intents(state)
+
         intent_vectors = intents_from_state(state)
 
         # ---- Forward pass for ACTION with exploration noise (FIX 15) ----
@@ -334,9 +422,17 @@ class HANMLPTrainer:
             graph_emb2, _, msg_embs2 = self.han.encode_state(
                 state, intent_vectors=intent_vectors
             )
-            action2 = self.actor(graph_emb2, message_embs=msg_embs2)
-            q_value = self.critic_target(graph_emb2, action2)
-            actor_loss = -q_value.mean()
+            # USE_ENTROPY_REG: paper Eq. 33 — actor_loss = -Q - coeff*log_pi
+            if USE_ENTROPY_REG and isinstance(self.actor, DDPMActor):
+                action2, log_pi = self.actor.forward_with_logprob(
+                    graph_emb2, message_embs=msg_embs2
+                )
+                q_value    = self.critic_target(graph_emb2, action2)
+                actor_loss = -q_value.mean() - ENTROPY_COEFF * log_pi.mean()
+            else:
+                action2    = self.actor(graph_emb2, message_embs=msg_embs2)
+                q_value    = self.critic_target(graph_emb2, action2)
+                actor_loss = -q_value.mean()
             self.opt_han.zero_grad()
             self.opt_actor.zero_grad()
             actor_loss.backward()
@@ -344,6 +440,12 @@ class HANMLPTrainer:
             nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm_actor)
             self.opt_han.step()
             self.opt_actor.step()
+            # NOTE: these step once per ACTOR update (every 2nd episode), i.e.
+            # 500 times over 1000 episodes, so with step_size=300 the LR decays
+            # once rather than the intended three times. Moving them out to fire
+            # once per episode was tested (2026-08-05) and made ISR slightly
+            # worse, so it is left as-is; the reported results assume this
+            # cadence. Revisit only alongside a full retrain.
             self.sched_han.step()
             self.sched_actor.step()
             a_loss_val = actor_loss.item()
@@ -375,8 +477,10 @@ class HANMLPTrainer:
             reward, c_loss, a_loss, isr = self.train_step()
 
             if ep % 50 == 0:
+                lam_tag = (f" | LAM_comp: {lam_comp_ratio:.3f}"
+                           if lam_comp_ratio is not None else "")
                 log(f"Ep {ep}/{max_episodes} | CSCQI: {reward:.4f} | ISR: {isr:.3f} "
-                    f"| Critic: {c_loss:.4f} | Actor: {a_loss:.4f}")
+                    f"| Critic: {c_loss:.4f} | Actor: {a_loss:.4f}{lam_tag}")
                 self.history.append((ep, reward, isr, c_loss, a_loss))
 
             # Eval-based checkpointing every 50 episodes (FIX 15)
@@ -570,13 +674,15 @@ class PerTaskGaussianActor(nn.Module):
         self.n_tasks = n_tasks
         self.n_relays = n_relays
         self.n_mcs = n_mcs
-        self.action_dim = n_tasks + n_tasks * n_relays + n_tasks * n_mcs
+        self.use_relay = USE_RELAY_ACTION
+        self.action_dim = compute_action_dim(n_tasks, n_relays, n_mcs)
         self.task_bw_head = nn.Sequential(
             nn.Linear(task_emb_dim, hidden), nn.ReLU(),
             nn.Linear(hidden, 1))
-        self.task_relay_head = nn.Sequential(
-            nn.Linear(task_emb_dim + graph_emb_dim, hidden), nn.ReLU(),
-            nn.Linear(hidden, n_relays))
+        if self.use_relay:
+            self.task_relay_head = nn.Sequential(
+                nn.Linear(task_emb_dim + graph_emb_dim, hidden), nn.ReLU(),
+                nn.Linear(hidden, n_relays))
         self.task_mcs_head = nn.Sequential(
             nn.Linear(task_emb_dim + graph_emb_dim, hidden), nn.ReLU(),
             nn.Linear(hidden, n_mcs))
@@ -587,11 +693,13 @@ class PerTaskGaussianActor(nn.Module):
             graph_emb = graph_emb.unsqueeze(0)
         bw = self.task_bw_head(message_embs).squeeze(-1).unsqueeze(0)  # [1, Nt] logits
         g = graph_emb.expand(message_embs.shape[0], -1)
-        relay = self.task_relay_head(torch.cat([message_embs, g], dim=-1))  # [Nt, n_relays]
-        relay = relay.reshape(1, -1)                                        # [1, Nt*n_relays]
+        parts = [bw]
+        if self.use_relay:
+            relay = self.task_relay_head(torch.cat([message_embs, g], dim=-1))
+            parts.append(relay.reshape(1, -1))                          # [1, Nt*n_relays]
         mcs = self.task_mcs_head(torch.cat([message_embs, g], dim=-1))  # [Nt, n_mcs]
-        mcs = mcs.reshape(1, -1)                                        # [1, Nt*n_mcs]
-        return torch.cat([bw, relay, mcs], dim=-1)                     # [1, action_dim] raw
+        parts.append(mcs.reshape(1, -1))                                # [1, Nt*n_mcs]
+        return torch.cat(parts, dim=-1)                                 # [1, action_dim] raw
 
     def forward(self, graph_emb, message_embs):
         raw = self._mean(graph_emb, message_embs)
@@ -599,9 +707,8 @@ class PerTaskGaussianActor(nn.Module):
 
     def _squash(self, raw):
         bw = torch.softmax(raw[:, :self.n_tasks].clamp(-6.0, 6.0), dim=-1)
-        relay = torch.sigmoid(raw[:, self.n_tasks:self.n_tasks + self.n_tasks * self.n_relays])
-        mcs = torch.sigmoid(raw[:, self.n_tasks + self.n_tasks * self.n_relays:])
-        return torch.cat([bw, relay, mcs], dim=-1)
+        rest = torch.sigmoid(raw[:, self.n_tasks:])
+        return torch.cat([bw, rest], dim=-1)
 
     def get_dist(self, graph_emb, message_embs):
         mean = self._mean(graph_emb, message_embs)
@@ -620,13 +727,15 @@ class RawStateActor(nn.Module):
         self.n_tasks   = n_tasks
         self.n_relays  = n_relays
         self.n_mcs     = n_mcs
-        self.action_dim = n_tasks + n_tasks * n_relays + n_tasks * n_mcs
+        self.use_relay = USE_RELAY_ACTION
+        self.action_dim = compute_action_dim(n_tasks, n_relays, n_mcs)
         self.net = nn.Sequential(
             nn.Linear(state_dim, hidden), nn.ReLU(),
             nn.Linear(hidden, hidden),    nn.ReLU(),
         )
         self.bw_head    = nn.Linear(hidden, n_tasks)
-        self.relay_head = nn.Linear(hidden, n_tasks * n_relays)
+        if self.use_relay:
+            self.relay_head = nn.Linear(hidden, n_tasks * n_relays)
         self.mcs_head   = nn.Linear(hidden, n_tasks * n_mcs)
         self.log_std    = nn.Parameter(torch.zeros(self.action_dim))
 
@@ -634,16 +743,16 @@ class RawStateActor(nn.Module):
         if state_vec.dim() == 1:
             state_vec = state_vec.unsqueeze(0)
         h   = self.net(state_vec)
-        bw  = self.bw_head(h)
-        rel = self.relay_head(h)
-        mcs = self.mcs_head(h)
-        return torch.cat([bw, rel, mcs], dim=-1)
+        parts = [self.bw_head(h)]
+        if self.use_relay:
+            parts.append(self.relay_head(h))
+        parts.append(self.mcs_head(h))
+        return torch.cat(parts, dim=-1)
 
     def _squash(self, raw):
-        bw    = torch.softmax(raw[:, :self.n_tasks].clamp(-6, 6), dim=-1)
-        relay = torch.sigmoid(raw[:, self.n_tasks:self.n_tasks + self.n_tasks*self.n_relays])
-        mcs   = torch.sigmoid(raw[:, self.n_tasks + self.n_tasks*self.n_relays:])
-        return torch.cat([bw, relay, mcs], dim=-1)
+        bw   = torch.softmax(raw[:, :self.n_tasks].clamp(-6, 6), dim=-1)
+        rest = torch.sigmoid(raw[:, self.n_tasks:])
+        return torch.cat([bw, rest], dim=-1)
 
     def forward(self, state_vec, **kwargs):
         return self._squash(self._mean(state_vec))
@@ -849,7 +958,7 @@ def train_sac_baseline(
 ):
     """SAC baseline — raw state vector, no HAN. Matches paper experimental setup."""
     s_dim      = raw_state_dim(n_tasks)
-    action_dim = n_tasks + n_tasks * n_relays + n_tasks * n_mcs
+    action_dim = compute_action_dim(n_tasks, n_relays, n_mcs)
     actor      = RawStateActor(s_dim, n_tasks, n_relays, n_mcs).to(DEVICE)
     q_critic   = TwinQCritic(s_dim, action_dim).to(DEVICE)
     opt_a      = optim.Adam(actor.parameters(),    lr=lr)
@@ -925,20 +1034,32 @@ def train_sac_baseline(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import argparse
+    _ap = argparse.ArgumentParser()
+    _ap.add_argument("--tpc", type=int, default=4)
+    _ap.add_argument("--episodes", type=int, default=1000)
+    _ap.add_argument("--hdm-only", action="store_true",
+                     help="train HDM and skip the baselines")
+    _args = _ap.parse_args()
+
     set_seed(42)
 
     print("=" * 60)
     print("HAN + MLP/DDPM TRAINING  (FIX 1-18)")
-    print(f"  tpc=4 (20 tasks), difficulty=medium, 1000 episodes, policy={POLICY}")
+    print(f"  tpc={_args.tpc} ({_args.tpc * 5} tasks), difficulty=medium, "
+          f"{_args.episodes} episodes, policy={POLICY}")
     print("=" * 60)
 
     # ---- Train HDM ----
-    trainer = HANMLPTrainer(tasks_per_csca=4, difficulty="medium")
-    best_isr = trainer.train(max_episodes=1000)
+    trainer = HANMLPTrainer(tasks_per_csca=_args.tpc, difficulty="medium")
+    best_isr = trainer.train(max_episodes=_args.episodes)
 
     print("\nEvaluating HDM...")
     hdm_mean, hdm_std, hdm_delay, hdm_dist = evaluate_policy(trainer, n_episodes=200)
     print(f"HDM ISR: {hdm_mean:.4f} ± {hdm_std:.4f}  delay={hdm_delay:.3f}s  dist={hdm_dist:.4f}  (best training: {best_isr:.4f})")
+
+    if _args.hdm_only:
+        sys.exit(0)
 
     # ---- Train baselines on the SAME environment ----
     eval_env = MultiCSCAEnvironment(
