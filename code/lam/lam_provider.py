@@ -360,7 +360,7 @@ def _smoke_test():
         from lam_intent_generator import lkb_retrieve, _load_lkb
         corpus = _load_lkb()
         if corpus:
-            hits = lkb_retrieve("send image urgently", top_k=5)
+            hits = lkb_retrieve("send image urgently", k=5)
             assert len(hits) > 0, "lkb_retrieve returned empty"
             print(f"  [PASS] LKB retrieval: {len(corpus)} exemplars loaded, "
                   f"top-5 scores: {[round(h['score'],3) for h in hits]}")
