@@ -11,7 +11,11 @@ env/
 
 # Model weights and data (large files)
 models/
-data/
+# data/ is excluded except for the LKB corpus (small JSON, must be tracked)
+data/*
+!data/lkb
+data/lkb/*
+!data/lkb/intent_corpus.json
 all-MiniLM-L6-v2/
 repos/
 *.gguf

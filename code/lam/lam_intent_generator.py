@@ -243,34 +243,88 @@ def lkb_retrieve(query: str, k: int = _RETRIEVE_K) -> list:
     return [{**e, "score": float(s)} for e, s in ranked]
 
 
+# ---------------------------------------------------------------------------
+# Local cross-encoder reranker (MiniLM bi-encoder used as asymmetric scorer)
+# Falls back to this when COHERE_API_KEY is absent, rather than silently
+# returning embedding-order truncation.
+# ---------------------------------------------------------------------------
+_local_reranker = None  # lazy-loaded SentenceTransformer used for local rerank
+
+
+def _local_rerank(query: str, docs: list, top_n: int) -> list:
+    """Rerank docs by MiniLM cosine(query, sentence) — offline, no API key needed.
+
+    Uses the same model already loaded for lkb_retrieve(), so no extra VRAM.
+    Scores are cosine similarities in [-1, 1]; overwrites the embedding-score
+    from lkb_retrieve with a query-conditioned score.
+    """
+    model = _get_st_model()
+    if model is None:
+        import warnings
+        warnings.warn(
+            "[cohere_rerank] COHERE_API_KEY not set and sentence-transformers "
+            "unavailable — falling back to embedding-order (no reranking).",
+            stacklevel=3,
+        )
+        return docs[:top_n]
+    try:
+        import numpy as _np
+        sentences = [d["sentence"] for d in docs]
+        q_emb = model.encode([query], convert_to_numpy=True, show_progress_bar=False)[0]
+        s_emb = model.encode(sentences, convert_to_numpy=True, show_progress_bar=False)
+        q_emb = q_emb / (_np.linalg.norm(q_emb) + 1e-8)
+        s_emb = s_emb / (_np.linalg.norm(s_emb, axis=1, keepdims=True) + 1e-8)
+        scores = s_emb @ q_emb
+        ranked = sorted(zip(docs, scores.tolist()), key=lambda p: -p[1])
+        return [{**d, "score": float(s)} for d, s in ranked[:top_n]]
+    except Exception as exc:
+        import warnings
+        warnings.warn(
+            f"[cohere_rerank] Local reranker failed ({exc}); using embedding order.",
+            stacklevel=3,
+        )
+        return docs[:top_n]
+
+
 def cohere_rerank(query: str, docs: list, top_n: int = _RERANK_TOP_N) -> list:
-    """Cross-encoder rerank via Cohere. Keyless / offline -> identity truncation.
+    """Cross-encoder rerank via Cohere API, with local MiniLM fallback.
+
+    Priority order:
+      1. Cohere API  (when COHERE_API_KEY is set)
+      2. Local MiniLM reranker  (offline, uses all-MiniLM-L6-v2 already in repo)
+      3. Embedding-order truncation + warning  (when sentence-transformers absent)
 
     docs are the dicts returned by lkb_retrieve; the return preserves that shape
-    with "score" overwritten by the rerank relevance when Cohere is used.
+    with "score" overwritten by the rerank relevance score.
     """
     if not docs:
         return []
     api_key = os.environ.get("COHERE_API_KEY")
-    if not api_key:
-        return docs[:top_n]
-    try:
-        import cohere
-        client = cohere.Client(api_key)
-        resp = client.rerank(
-            query=query,
-            documents=[d["sentence"] for d in docs],
-            top_n=min(top_n, len(docs)),
-            model="rerank-english-v3.0",
-        )
-        out = []
-        for r in resp.results:
-            d = dict(docs[r.index])
-            d["score"] = float(r.relevance_score)
-            out.append(d)
-        return out
-    except Exception:
-        return docs[:top_n]
+    if api_key:
+        try:
+            import cohere
+            client = cohere.Client(api_key)
+            resp = client.rerank(
+                query=query,
+                documents=[d["sentence"] for d in docs],
+                top_n=min(top_n, len(docs)),
+                model="rerank-english-v3.0",
+            )
+            out = []
+            for r in resp.results:
+                d = dict(docs[r.index])
+                d["score"] = float(r.relevance_score)
+                out.append(d)
+            return out
+        except Exception as exc:
+            import warnings
+            warnings.warn(
+                f"[cohere_rerank] Cohere API call failed ({exc}); "
+                "falling back to local MiniLM reranker.",
+                stacklevel=2,
+            )
+    # No API key (or API failed) — use local MiniLM reranker
+    return _local_rerank(query, docs, top_n)
 
 
 def _check_isrel(query: str, docs: list) -> bool:
