@@ -20,6 +20,10 @@ openai-whisper
 # LAM / Ollama
 ollama>=0.5.0
 
+# Self-adaptive RAG reranker (optional — needs COHERE_API_KEY;
+# without a key lam_intent_generator falls back to embedding-order rerank)
+cohere
+
 # Image
 Pillow
 

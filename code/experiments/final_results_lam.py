@@ -30,6 +30,7 @@ from train_han_mlp import (
     MultiCSCAEnvironment, compute_isr, compute_cscqi, _task_metrics,
 )
 from ddpm_policy import DDPMActor
+from sim_channel import normalise_intents
 
 import matplotlib
 matplotlib.use("Agg")
@@ -64,8 +65,7 @@ def _inject_lam(state, delay_s, quality, n_tasks):
     state["SCt"]["quality_intents"] = [quality]  * n_tasks
     for i in range(n_tasks):
         ds_norm = min(state["SCt"]["data_sizes"][i] / 6e5, 1.0)
-        di      = delay_s / 10.0
-        qi      = quality
+        di, qi  = normalise_intents(delay_s, quality)
         urgency = (1.0 - di) * 0.5 + qi * 0.5
         state["SCt"]["message_features"][i] = [ds_norm, di, qi, urgency]
     return state

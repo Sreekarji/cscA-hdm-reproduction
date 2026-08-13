@@ -82,10 +82,11 @@ def make_trainer(tpc):
     trainer.n_tasks  = tpc * N_CSCAS
     n_base_stations  = N_CSCAS  # paper: n_base_stations = n_cscas
 
-    # Recompute action_dim: BW + relay logits + MCS logits
-    trainer.action_dim = (trainer.n_tasks
-                          + trainer.n_tasks * N_RELAYS
-                          + trainer.n_tasks * trainer.n_mcs)
+    # Recompute action_dim through the shared helper so this stays in sync with
+    # train_han_mlp.USE_RELAY_ACTION (relay block present only when enabled).
+    from train_han_mlp import compute_action_dim
+    trainer.action_dim = compute_action_dim(
+        trainer.n_tasks, N_RELAYS, trainer.n_mcs)
 
     # Rebuild environment with new scale
     trainer.env = MultiCSCAEnvironment(

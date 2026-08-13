@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """
-lam_intent_demo.py — End-to-end LAM intent cognition demo.
+lam_intent_demo.py — Single-intent LAM demo (one sentence, broadcast to all tasks).
 
 Pipeline:
   user text -> Qwen2.5-VL-3B (Ollama) -> [delay_s, quality] -> HAN+DDPM -> allocation
+
+For the heterogeneous per-task version (different text/image/audio per task,
+plus MSS compression) use e2e_demo.py, which reuses load_checkpoint and
+_call_actor from this module.
 
 Does NOT retrain. Loads existing checkpoint, feeds it LAM-parsed intents.
 
 Run:
   python code/experiments/lam_intent_demo.py
   python code/experiments/lam_intent_demo.py --text "stream now, 0.5 seconds"
-  python code/experiments/lam_intent_demo.py --tpc 2
+  python code/experiments/lam_intent_demo.py --tpc 2 --no-rag
 """
 
 import os
@@ -30,6 +34,7 @@ from train_han_mlp import (
     HANMLPTrainer, sample_eval_state, intents_from_state,
     parse_action, _task_metrics, DEVICE, POLICY, CHECKPOINT_PATH,
 )
+from sim_channel import normalise_intents
 from lam_intent_generator import parse_intent_from_text, normalize_intent
 
 def get_args():
@@ -37,6 +42,8 @@ def get_args():
     p.add_argument("--text", type=str, default="send the data accurately within 2 seconds")
     p.add_argument("--tpc", type=int, default=4)
     p.add_argument("--model", type=str, default="qwen2.5vl:3b")
+    p.add_argument("--no-rag", action="store_true",
+                   help="bypass the self-adaptive RAG loop (ablation)")
     return p.parse_args()
 
 _HAN_KEYS   = ["han", "han_state_dict", "han_network", "model"]
@@ -73,8 +80,7 @@ def inject_lam_intents(state, delay_s, quality, n_tasks):
     state["SCt"]["quality_intents"] = [quality]  * n_tasks
     for i in range(n_tasks):
         ds_norm = min(state["SCt"]["data_sizes"][i] / 6e5, 1.0)
-        di      = delay_s / 10.0
-        qi      = quality
+        di, qi  = normalise_intents(delay_s, quality)
         urgency = (1.0 - di) * 0.5 + qi * 0.5
         state["SCt"]["message_features"][i] = [ds_norm, di, qi, urgency]
     return state
@@ -93,11 +99,10 @@ def run_demo(trainer, delay_s, quality):
     state = sample_eval_state(trainer.env)
     state = inject_lam_intents(state, delay_s, quality, n_tasks)
 
-    d_arr   = np.array(state["SCt"]["delay_intents"])
-    d_range = d_arr.max() - d_arr.min() + 1e-8
-    urgency = 1.0 - (d_arr - d_arr.min()) / d_range
-    q_arr   = np.array(state["SCt"]["quality_intents"])
-    intent_vectors = np.stack([urgency, q_arr], axis=1).tolist()
+    # Shared helper, NOT a local min-max rescale. The injected intents are
+    # uniform across tasks, so a per-episode min-max would divide by ~0 and
+    # hand the HAN an all-zero urgency column.
+    intent_vectors = intents_from_state(state)
 
     with torch.no_grad():
         graph_emb, _, msg_embs = trainer.han.encode_state(
@@ -132,7 +137,8 @@ def run_demo(trainer, delay_s, quality):
 def main():
     args = get_args()
     print(f"\n[demo] Parsing intent with LAM ({args.model}) ...")
-    raw_d, raw_q = parse_intent_from_text(args.text, model=args.model)
+    raw_d, raw_q = parse_intent_from_text(args.text, model=args.model,
+                                          use_rag=not args.no_rag)
     delay_s, quality = normalize_intent(raw_d, raw_q)
     print(f"[demo] Text           : {args.text!r}")
     print(f"[demo] Raw LAM output : delay={raw_d:.3f} s  quality={raw_q:.3f}")

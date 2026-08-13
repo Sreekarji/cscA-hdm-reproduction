@@ -85,10 +85,15 @@ def _forward_with_logprob(self, graph_emb, message_embs):
         else:
             a_n = mean
 
+    # Same flat layout as DDPMActor.forward — relay block only when enabled.
     bw  = torch.softmax(a_n[:, 0] / self.bw_temperature.abs().clamp_min(0.1),
                         dim=0).unsqueeze(0)
-    mcs = torch.sigmoid(a_n[:, 1:]).reshape(1, -1)
-    action = torch.cat([bw, mcs], dim=-1)
+    parts, col = [bw], 1
+    if getattr(self, "use_relay", False):
+        parts.append(torch.sigmoid(a_n[:, col:col + self.n_relays]).reshape(1, -1))
+        col += self.n_relays
+    parts.append(torch.sigmoid(a_n[:, col:]).reshape(1, -1))
+    action = torch.cat(parts, dim=-1)
     return action, log_pi
 
 

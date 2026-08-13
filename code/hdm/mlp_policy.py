@@ -5,8 +5,12 @@ This isolates HAN's contribution from DDPM training complexity.
 
 Architecture:
 - State: HAN graph embedding GL_t [256-dim] + per-task message embeddings [n_tasks x 256-dim]
-- Actor: MLP(GL_t concat mean(message_embs)) -> action [45-dim]
+- Actor: MLP(GL_t concat mean(message_embs)) -> action [action_dim]
 - Critic: MLP(GL_t concat action) -> value [1-dim]
+
+action_dim is supplied by the caller (train_han_mlp.compute_action_dim) and is
+n_tasks*(1+n_relays+n_mcs) with the relay head, n_tasks*(1+n_mcs) without.
+The global head width is derived as action_dim - n_tasks either way.
 """
 
 import torch
@@ -60,7 +64,7 @@ class MLPActor(nn.Module):
             graph_emb: [batch, 256] graph embedding from HAN
             message_embs: [n_tasks, 256] per-task embeddings from HAN
         Returns:
-            action: [batch, 45] communication policy
+            action: [batch, action_dim] communication policy
         """
         if graph_emb.dim() == 1:
             graph_emb = graph_emb.unsqueeze(0)
@@ -86,13 +90,23 @@ class MLPActor(nn.Module):
         return action
 
     def parse_action(self, action, n_tasks=5, n_relays=5, n_mcs=3):
+        # Layout is inferred from the actual width, not assumed, so this works
+        # for both action spaces (see train_han_mlp.USE_RELAY_ACTION):
+        #   with relay   : n_tasks * (1 + n_relays + n_mcs)
+        #   without relay: n_tasks * (1 + n_mcs)
         bw = action[:, :n_tasks]
-        relay = action[:, n_tasks:n_tasks + n_tasks * n_relays].reshape(
-            action.shape[0], n_tasks, n_relays
-        )
-        mcs = action[:, n_tasks + n_tasks * n_relays:].reshape(
-            action.shape[0], n_tasks, n_mcs
-        )
+        has_relay = action.shape[-1] >= n_tasks * (1 + n_relays + n_mcs)
+        if has_relay:
+            relay = action[:, n_tasks:n_tasks + n_tasks * n_relays].reshape(
+                action.shape[0], n_tasks, n_relays
+            )
+            mcs = action[:, n_tasks + n_tasks * n_relays:].reshape(
+                action.shape[0], n_tasks, n_mcs
+            )
+        else:
+            relay = torch.zeros(action.shape[0], n_tasks, n_relays,
+                                device=action.device, dtype=action.dtype)
+            mcs = action[:, n_tasks:].reshape(action.shape[0], n_tasks, n_mcs)
         return {"bandwidth": bw, "relay": relay, "mcs": mcs}
 
 
@@ -123,17 +137,22 @@ class MLPCritic(nn.Module):
 
 if __name__ == "__main__":
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    actor = MLPActor(action_dim=45, n_tasks=5).to(DEVICE)
-    critic = MLPCritic(action_dim=45).to(DEVICE)
+    n_tasks, n_relays, n_mcs = 5, 5, 3
+    for use_relay in (False, True):
+        action_dim = n_tasks * (1 + (n_relays if use_relay else 0) + n_mcs)
+        actor  = MLPActor(action_dim=action_dim, n_tasks=n_tasks).to(DEVICE)
+        critic = MLPCritic(action_dim=action_dim).to(DEVICE)
 
-    graph_emb = torch.randn(1, 256, device=DEVICE)
-    msg_embs = torch.randn(5, 256, device=DEVICE)
+        graph_emb = torch.randn(1, 256, device=DEVICE)
+        msg_embs  = torch.randn(n_tasks, 256, device=DEVICE)
 
-    action = actor(graph_emb, message_embs=msg_embs)
-    value = critic(graph_emb, action)
+        action = actor(graph_emb, message_embs=msg_embs)
+        value  = critic(graph_emb, action)
+        parsed = actor.parse_action(action, n_tasks, n_relays, n_mcs)
 
-    print(f"Action shape: {action.shape}")
-    print(f"BW allocation: {action[0, :5].detach().cpu().numpy().round(3)}")
-    print(f"BW sum: {action[0, :5].sum().item():.4f} (should be ~1.0)")
-    print(f"Value: {value.item():.4f}")
-    print("MLPActor test passed.")
+        assert action.shape == (1, action_dim), action.shape
+        assert parsed["mcs"].shape == (1, n_tasks, n_mcs), parsed["mcs"].shape
+        assert parsed["relay"].shape == (1, n_tasks, n_relays), parsed["relay"].shape
+        print(f"use_relay={use_relay}  action_dim={action_dim}  "
+              f"BW sum={action[0, :n_tasks].sum().item():.4f}  "
+              f"V={value.item():.4f}  PASSED")

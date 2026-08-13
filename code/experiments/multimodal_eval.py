@@ -44,6 +44,7 @@ for sub in ["code/channel", "code/evaluation", "code/utils", "code/hdm", "code"]
 from reproducibility import set_seed
 from sim_channel import WirelessChannel
 from config import MP2_ROOT, MINIML_PATH
+from mss_algorithm import minimum_synonymous_subsequence_batch
 
 RESULTS_DIR = str(MP2_ROOT / "results" / "final")
 LOG_PATH    = str(MP2_ROOT / "log.txt")
@@ -58,6 +59,13 @@ N_SENTENCES = 100
 N_AUDIO     = 50
 N_IMAGES    = 50
 COMPRESSION_ETA = 0.73
+# Compression method for the text pipeline.
+#   "eta" — fixed word-truncation proxy, keeps Fig 6b pinned at 0.73
+#   "mss" — paper Algorithm 1, ratio is measured per sentence
+# eta is the default so previously reported Fig 6b numbers stay reproducible;
+# MSS is the paper-faithful path and is what e2e_demo.py uses.
+COMPRESSION_METHOD = "eta"
+MSS_EPSILON = 0.95
 
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
@@ -230,6 +238,20 @@ def compress_text(text, eta=COMPRESSION_ETA):
     return " ".join(words[:keep]), keep / max(len(words), 1)
 
 
+def compress_text_mss(sentences, epsilon=MSS_EPSILON):
+    """
+    Paper Algorithm 1 compression. Unlike compress_text, the ratio here is
+    MEASURED (it falls out of how many tokens survive the synonymy threshold)
+    rather than fixed at eta, and the tokens dropped are the least
+    meaning-bearing ones rather than the tail of the sentence.
+
+    Returns (list_of_compressed, list_of_ratios).
+    """
+    pairs = minimum_synonymous_subsequence_batch(
+        sentences, epsilon=epsilon, sim_fn=batch_similarity)
+    return [p[0] for p in pairs], [p[1] for p in pairs]
+
+
 def apply_channel_to_text(text: str, distortion: float, rng) -> str:
     """
     M-FIX-1: realise channel distortion as word-level erasure and substitution.
@@ -291,13 +313,26 @@ def load_sst_sentences(n=N_SENTENCES):
     return sentences
 
 
-def evaluate_text(sentences, snr_range):
-    log(f"[text] Evaluating {len(sentences)} sentences x {len(snr_range)} SNR points")
-    compressed, compression_ratios = [], []
-    for s in sentences:
-        c, r = compress_text(s)
-        compressed.append(c)
-        compression_ratios.append(r)
+def evaluate_text(sentences, snr_range, method=None):
+    method = method or COMPRESSION_METHOD
+    log(f"[text] Evaluating {len(sentences)} sentences x {len(snr_range)} SNR points"
+        f"  (compression={method})")
+    if method == "mss":
+        compressed, compression_ratios = compress_text_mss(sentences)
+        note   = f"measured MSS ratio (paper Algorithm 1, epsilon={MSS_EPSILON})"
+        tag    = f"MSS_eps{MSS_EPSILON}"
+        c_mean = float(np.mean(compression_ratios))
+        c_std  = float(np.std(compression_ratios))
+    else:
+        compressed, compression_ratios = [], []
+        for s in sentences:
+            c, r = compress_text(s)
+            compressed.append(c)
+            compression_ratios.append(r)
+        note   = "fixed word-truncation proxy (eta=0.73); not a measured ratio"
+        tag    = "word_truncation_eta073"
+        c_mean = COMPRESSION_ETA
+        c_std  = 0.0
     snr_metrics = channel_sim_snr(compressed, snr_range)
     results = {}
     for snr_db in snr_range:
@@ -311,13 +346,13 @@ def evaluate_text(sentences, snr_range):
             "similarity_mean":  float(sims.mean()),
             "similarity_std":   float(sims.std()),
             "accuracy_rate":    acc,
-            "compression_mean": COMPRESSION_ETA,
-            "compression_std":  0.0,
-            "compression_note": "fixed word-truncation proxy (eta=0.73); not a measured ratio",
+            "compression_mean": c_mean,
+            "compression_std":  c_std,
+            "compression_note": note,
             "delay_mean":       snr_metrics[snr_db]["delay_mean"],
             "distortion_mean":  snr_metrics[snr_db]["distortion_mean"],
             "n":                len(sentences),
-            "method":           "SST + word_truncation_eta073 + MiniLM_cosine",
+            "method":           f"SST + {tag} + MiniLM_cosine",
         }
     return results
 

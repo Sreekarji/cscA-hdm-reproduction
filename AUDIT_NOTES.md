@@ -541,6 +541,12 @@ a monkey-patch in `ablation_logpi.py` and not available in the production
 - Default `False`: actor loss = `-Q.mean()` (committed results unchanged).
 - Set `True` to activate Eq. 33. `ENTROPY_COEFF = 0.01` (paper value).
 
+**Audit item B6 — `forward_with_logprob`:** implemented natively in
+`DDPMActor`. `USE_ENTROPY_REG=False` (default) — entropy term excluded from
+training loss after empirical ISR regression observed during `ablation_logpi`
+experiment. Method is present and gradient-tested; not active in reported
+results.
+
 **Regression check:** 49 offline tests pass with `USE_ENTROPY_REG=False`,
 confirming no change to the default training path.
 

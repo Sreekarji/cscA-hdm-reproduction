@@ -16,7 +16,32 @@ class CSCGraphBuilder:
       (init, init_conn, relay)
       (init, init_conn, base_station)
       (init, init_conn, message)
+
+    Relay-message edges are content-dependent: a message of semantic type t
+    connects to every relay whose fixed knowledge set covers t. Edge count
+    therefore varies per episode (mean 39.9, range 29-53 at 20 messages /
+    5 relays), which is what makes the HAN's attention over heterogeneous
+    topology measurable (a static topology collapses HAN to a shared per-node
+    MLP). This is the ONLY episode-varying edge type; comm_conn and comm_req
+    are deterministic functions of node index.
     """
+
+    N_SEMANTIC_TYPES = 3          # 0 = text, 1 = audio, 2 = image
+    RELAY_KNOWLEDGE_P = 0.475     # per-(relay, type) inclusion probability.
+                                  # MEASURED at n_messages=20, n_relays=5,
+                                  # seed 42, 500 episodes: semantic_conn edges
+                                  # mean 39.9, range 29-53 (std 3.6). An earlier
+                                  # docstring claimed 45-50; that was never
+                                  # measured and is wrong. Expected value is
+                                  # n_messages * mean(relays per type) =
+                                  # 20 * (1+3+2)/3 = 40. Do not retune this
+                                  # without retraining: it changes topology.
+    SEMANTIC_TYPE_FEATURE = [0.0, 0.5, 1.0]   # feature-column encoding per type
+
+    # Must match sim_channel.QUAL_INT_MIN / QUAL_INT_SPAN / DELAY_URGENCY_DIVISOR.
+    QUAL_INT_MIN          = 0.10
+    QUAL_INT_SPAN         = 0.30
+    DELAY_URGENCY_DIVISOR = 2.50
 
     def __init__(
         self,
@@ -38,8 +63,17 @@ class CSCGraphBuilder:
         self.relay_feat_dim = relay_feat_dim
         self.message_feat_dim = message_feat_dim
 
-        # Topology resampled per episode in build() — no precomputed buffers
-        pass  # counts stored as self.n_* attributes above
+        # Relay knowledge: which semantic types (0=text, 1=audio, 2=image) each
+        # relay can recover. Fixed per relay for the lifetime of the deployment
+        # (paper Sec IV-B: the LKB is provisioned to relays at deployment time),
+        # so it must NOT be resampled per episode. Seeded independently of the
+        # global RNG so topology is identical across runs and policies.
+        _rng = np.random.default_rng(42)
+        knowledge = _rng.random((n_relays, self.N_SEMANTIC_TYPES)) < self.RELAY_KNOWLEDGE_P
+        for r in range(n_relays):
+            if not knowledge[r].any():
+                knowledge[r, _rng.integers(0, self.N_SEMANTIC_TYPES)] = True
+        self.relay_knowledge = knowledge
 
     def build(self, system_state: dict = None,
               intent_vectors: list = None) -> HeteroData:
@@ -75,11 +109,13 @@ class CSCGraphBuilder:
             relay_feats = _fit(raw_relay, n_r, self.relay_feat_dim)
             bs_feats = _fit(raw_bs, n_b, self.bs_feat_dim)
 
-            # Normalize data sizes to [0,1] using fixed max (10MB)
+            # Normalize data sizes with the same divisor sim_channel.py uses when
+            # it writes SCt["message_features"] (6e5), so the HAN's size feature
+            # matches the environment's own encoding.
             data_sizes = torch.tensor(
                 SCt.get("data_sizes", [1e6] * n_m), dtype=torch.float
             )
-            data_sizes_norm = torch.clamp(data_sizes / 5e5, 0.0, 1.0)
+            data_sizes_norm = torch.clamp(data_sizes / 6e5, 0.0, 1.0)
 
             # Build message features with REAL intent vectors if provided
             if intent_vectors is not None:
@@ -94,14 +130,25 @@ class CSCGraphBuilder:
                 quality_intents = torch.tensor(
                     SCt.get("quality_intents", [0.8] * n_m), dtype=torch.float
                 )
-                delay_norm = 1.0 - torch.clamp(delay_intents / 10.0, 0.0, 1.0)
-                intent_t = torch.stack([delay_norm, quality_intents], dim=1)
+                # Same fixed bounds as sim_channel.normalise_intents. Kept inline
+                # (rather than importing) so the builder has no dependency on the
+                # channel package; the constants below must track that helper.
+                delay_norm = 1.0 - torch.clamp(
+                    delay_intents / self.DELAY_URGENCY_DIVISOR, 0.0, 1.0)
+                qual_norm = torch.clamp(
+                    (quality_intents - self.QUAL_INT_MIN) / self.QUAL_INT_SPAN,
+                    0.0, 1.0)
+                intent_t = torch.stack([delay_norm, qual_norm], dim=1)
 
             # Message features: [data_size_norm, semantic_type, delay_urgency, quality_req]
-            # Deterministic semantic type: text=0.0, audio=0.5, image=1.0
-            type_map = [0.0, 0.5, 1.0]  # text, audio, image
+            sem_types = SCt.get("semantic_types")
+            if sem_types is None:
+                sem_types = [i % self.N_SEMANTIC_TYPES for i in range(n_m)]
+            sem_types = [int(t) % self.N_SEMANTIC_TYPES for t in sem_types[:n_m]]
+            while len(sem_types) < n_m:
+                sem_types.append(len(sem_types) % self.N_SEMANTIC_TYPES)
             semantic_type = torch.tensor(
-                [type_map[i % 3] for i in range(n_m)],
+                [self.SEMANTIC_TYPE_FEATURE[t] for t in sem_types],
                 dtype=torch.float)
             message_feats = torch.cat([
                 data_sizes_norm.unsqueeze(1),
@@ -113,7 +160,13 @@ class CSCGraphBuilder:
             csca_feats = torch.randn(n_c, self.csca_feat_dim)
             relay_feats = torch.randn(n_r, self.relay_feat_dim)
             bs_feats = torch.randn(n_b, self.bs_feat_dim)
+            sem_types = [i % self.N_SEMANTIC_TYPES for i in range(n_m)]
+            # Column 1 is the semantic type channel; it must carry the same types
+            # used to build the relay edges below, not an independent random draw.
             message_feats = torch.randn(n_m, self.message_feat_dim)
+            message_feats[:, 1] = torch.tensor(
+                [self.SEMANTIC_TYPE_FEATURE[t] for t in sem_types],
+                dtype=torch.float)
 
         init_feat = torch.zeros(1, self.csca_feat_dim)
 
@@ -149,18 +202,37 @@ class CSCGraphBuilder:
             [csca_idx, bs_idx], dim=0
         )
 
-        # message -> csca: random per episode
-        msg_idx     = torch.arange(n_m)
-        csca_assign = torch.randint(0, n_c, (n_m,))
+        # message -> csca: round-robin, i.e. task i is issued by CSCA i % n_c.
+        # This MUST match sim_channel.step(), which draws task i's path loss from
+        # csca_positions[i % n_cscas]. A block assignment (i // tasks_per_csca)
+        # would tell the HAN that tasks 0..tpc-1 contend for one CSCA's resources
+        # while the simulator placed them at tpc different CSCAs.
+        msg_idx = torch.arange(n_m)
+        csca_assign = torch.tensor(
+            [i % n_c for i in range(n_m)], dtype=torch.long
+        )
         data["message", "comm_req", "csca"].edge_index = torch.stack(
             [msg_idx, csca_assign], dim=0
         )
 
-        # message -> relay: random per episode
-        relay_assign = torch.randint(0, n_r, (n_m,))
-        data["message", "semantic_conn", "relay"].edge_index = torch.stack(
-            [msg_idx, relay_assign], dim=0
-        )
+        # message -> relay: semantic_type INTERSECT relay_knowledge. A relay can
+        # only carry a message whose modality it holds knowledge for, so the
+        # edge count varies with the episode's semantic type draw.
+        rel_src, rel_dst = [], []
+        for m in range(n_m):
+            t = sem_types[m]
+            for r in range(n_r):
+                if self.relay_knowledge[r % self.relay_knowledge.shape[0], t]:
+                    rel_src.append(m)
+                    rel_dst.append(r)
+        if rel_src:
+            relay_edge_index = torch.stack([
+                torch.tensor(rel_src, dtype=torch.long),
+                torch.tensor(rel_dst, dtype=torch.long),
+            ], dim=0)
+        else:
+            relay_edge_index = torch.empty((2, 0), dtype=torch.long)
+        data["message", "semantic_conn", "relay"].edge_index = relay_edge_index
 
         # init -> all other node types
         for node_type, count in [

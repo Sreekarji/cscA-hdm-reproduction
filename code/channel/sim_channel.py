@@ -49,6 +49,33 @@ BLER_CEIL         = 0.95
 BLER_SLOPE        = 0.76
 MIN_BW_SHARE_FRAC = 0.10
 
+# ---------------------------------------------------------------------------
+# Intent normalisation (single source of truth)
+# ---------------------------------------------------------------------------
+# Quality intents are sampled in [0.10, 0.40] and delay intents in (0, 2.50] s.
+# Both must be mapped onto [0, 1] with FIXED bounds, never per-episode min/max:
+# a per-episode rescale makes the same physical intent produce different
+# features depending on what else was drawn that episode, so the HAN cannot
+# learn a stable mapping from feature to deadline.
+QUAL_INT_MIN          = 0.10
+QUAL_INT_SPAN         = 0.30
+DELAY_URGENCY_DIVISOR = 2.50
+
+
+def normalise_intents(delay, quality):
+    """Map a raw (delay_s, quality) intent pair onto normalised (di, qi).
+
+    di = delay / 2.50           -> 0 = instant, 1 = maximally slack
+    qi = (quality - 0.10)/0.30  -> 0 = loosest quality, 1 = strictest
+
+    Callers that need "urgency" should use (1 - di) so that larger = more
+    urgent, and use qi directly (NOT 1 - qi) so that larger = stricter.
+    Both outputs are clipped to [0, 1].
+    """
+    di = float(np.clip(delay / DELAY_URGENCY_DIVISOR, 0.0, 1.0))
+    qi = float(np.clip((quality - QUAL_INT_MIN) / QUAL_INT_SPAN, 0.0, 1.0))
+    return di, qi
+
 
 class WirelessChannel:
     """
@@ -183,8 +210,8 @@ class WirelessChannel:
         if use_deepsc:
             # Use actual DeepSC — import only when needed
             try:
-                import sys
-                sys.path.insert(0, r"D:\MP2\code\channel")
+                import sys, os
+                sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
                 from deepsc_channel import DeepSCChannel
                 ch = DeepSCChannel()
                 result = ch.transmit("test sentence", snr_db=sinr_db)
@@ -261,6 +288,14 @@ class WirelessChannel:
             "distortion":    distortion,
         }
         if use_mcs_table:
+            # NOTE (deviation, deliberate): mim defaults to 0.5 here and callers
+            # in step() do not pass a per-message MIM. Feeding the real Eq. 5 MIM
+            # in as a hard MCS constraint (Eq. 6 C3) was implemented and REVERTED:
+            # it caps the modulation order on high-entropy messages, the achieved
+            # rate drops, delays overshoot tau_S_int, and ISR fell ~24% across all
+            # policies including the baselines. Documented in AUDIT_NOTES.md.
+            # compute_mim / select_mcs_for_mim_and_sinr remain available and are
+            # exercised by the semantic layer (see hdm/mss_algorithm.py).
             mcs = select_mcs_for_mim_and_sinr(mim, sinr_db)
             result.update({
                 "mcs_index":           mcs["mcs_index"],
@@ -384,9 +419,8 @@ class MultiCSCAEnvironment:
         msg_feats = []
         for i in range(self.n_tasks):
             ds_norm = min(data_sizes[i] / 6e5, 1.0)
-            di      = delay_intents[i] / 10.0
-            qi      = quality_intents[i]
-            urgency = (1.0 - di) * 0.5 + (1.0 - qi) * 0.5
+            di, qi  = normalise_intents(delay_intents[i], quality_intents[i])
+            urgency = (1.0 - di) * 0.5 + qi * 0.5
             msg_feats.append([ds_norm, di, qi, urgency])
 
         SCt = {
@@ -394,6 +428,7 @@ class MultiCSCAEnvironment:
             "data_sizes":       data_sizes,
             "delay_intents":    delay_intents,
             "quality_intents":  quality_intents,
+            "semantic_types":   np.random.randint(0, 3, self.n_tasks).tolist(),
         }
         return {"Rt": Rt, "SCt": SCt}
 
@@ -422,9 +457,8 @@ class MultiCSCAEnvironment:
         msg_feats = []
         for i in range(self.n_tasks):
             ds_norm = min(data_sizes[i] / 6e5, 1.0)
-            di = delay_intents[i] / 10.0
-            qi = quality_intents[i]
-            urgency = (1.0 - di) * 0.5 + (1.0 - qi) * 0.5
+            di, qi = normalise_intents(delay_intents[i], quality_intents[i])
+            urgency = (1.0 - di) * 0.5 + qi * 0.5
             msg_feats.append([ds_norm, di, qi, urgency])
 
         SCt = {
@@ -432,6 +466,7 @@ class MultiCSCAEnvironment:
             "data_sizes": data_sizes,
             "delay_intents": delay_intents,
             "quality_intents": quality_intents,
+            "semantic_types": np.random.randint(0, 3, self.n_tasks).tolist(),
         }
         return {"Rt": Rt, "SCt": SCt}
 
@@ -668,6 +703,10 @@ class HighPressureEnvironment(MultiCSCAEnvironment):
 
         msg_feats = []
         for i in range(self.n_tasks):
+            # NOTE: HighPressureEnvironment deliberately keeps the OLD /10.0 and
+            # (1 - qi) formula. It is not part of the main tpc sweep, and its
+            # published numbers were produced under this scaling; switching it to
+            # normalise_intents() would silently invalidate them.
             ds_norm = min(data_sizes[i] / 6e5, 1.0)
             di = delay_intents[i] / 10.0
             qi = quality_intents[i]
@@ -691,5 +730,6 @@ class HighPressureEnvironment(MultiCSCAEnvironment):
             "data_sizes": data_sizes,
             "delay_intents": delay_intents,
             "quality_intents": quality_intents,
+            "semantic_types": np.random.randint(0, 3, self.n_tasks).tolist(),
         }
         return {"Rt": Rt, "SCt": SCt}
