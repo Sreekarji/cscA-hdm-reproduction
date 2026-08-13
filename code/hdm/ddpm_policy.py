@@ -7,10 +7,18 @@ the baselines, and is task-count agnostic.
 Reverse diffusion uses the reparameterization trick end-to-end, so gradients
 flow: Q -> action -> denoiser -> message_embs -> HAN, exactly like the MLP path.
 Noise schedule: paper Eq. 31-32. Reverse mean: Eq. 30.
+
+forward_with_logprob: native implementation of paper Eq. 33 entropy term.
+Accumulates Gaussian log-prob across all stochastic denoising steps (n=N..2).
+Step n=1 is deterministic so contributes 0 to log_pi.
+Enabled via config.USE_ENTROPY_REG (default False).
 """
+import math
 import numpy as np
 import torch
 import torch.nn as nn
+
+_LOG_2PI = math.log(2 * math.pi)
 
 
 class PerTaskDenoiser(nn.Module):
@@ -46,21 +54,40 @@ class PerTaskDenoiser(nn.Module):
 
 
 class DDPMActor(nn.Module):
-    """Drop-in replacement for MLPActor. forward(graph_emb, message_embs) -> [1, action_dim]."""
+    """Diffusion policy. forward(graph_emb, message_embs) -> [1, action_dim].
+
+    Per-task denoising over task_dim channels:
+      use_relay=True : [BW | relay(n_relays) | MCS(n_mcs)]  -> task_dim = 1+n_relays+n_mcs
+      use_relay=False: [BW | MCS(n_mcs)]                    -> task_dim = 1+n_mcs
+
+    The flat output is ordered [all BW | (all relay) | all MCS] to match
+    train_han_mlp.parse_action.
+    """
     def __init__(self, graph_emb_dim=256, task_emb_dim=256, action_dim=None,
                  hidden_dim=256, n_tasks=20, n_relays=5, n_mcs=3,
-                 n_denoising_steps=6, beta_min=0.1, beta_max=8.0):
+                 n_denoising_steps=6, beta_min=0.1, beta_max=8.0,
+                 use_relay=None):
         super().__init__()
+        if use_relay is None:
+            # Deferred import: train_han_mlp imports this module, so a top-level
+            # import here would be circular. By instantiation time it is loaded.
+            try:
+                from train_han_mlp import USE_RELAY_ACTION
+                use_relay = USE_RELAY_ACTION
+            except ImportError:
+                use_relay = False
         self.n_tasks  = n_tasks
         self.n_relays = n_relays
         self.n_mcs    = n_mcs
-        self.task_dim = 1 + n_relays + n_mcs   # BW + relay + MCS per task
-        expected = n_tasks + n_tasks * n_relays + n_tasks * n_mcs
+        self.use_relay = use_relay
+        self.task_dim = 1 + (n_relays if use_relay else 0) + n_mcs
+        expected = n_tasks * self.task_dim
         if action_dim is None:
             action_dim = expected
         assert action_dim == expected, (
             f"action_dim {action_dim} != {expected} "
-            f"(n_tasks={n_tasks}, n_relays={n_relays}, n_mcs={n_mcs})"
+            f"(n_tasks={n_tasks}, n_relays={n_relays}, n_mcs={n_mcs}, "
+            f"use_relay={use_relay})"
         )
         self.action_dim = action_dim
         self.N = n_denoising_steps
@@ -118,39 +145,100 @@ class DDPMActor(nn.Module):
         if message_embs is None:
             raise ValueError("DDPMActor requires per-task message_embs from HAN")
         raw = self.reverse_diffusion(graph_emb, message_embs, deterministic)
-        # raw: [n_tasks, task_dim] = [n_tasks, 1 + n_relays + n_mcs]
+        # raw: [n_tasks, task_dim]
+        return self._raw_to_action(raw)
 
+    def _raw_to_action(self, raw):
+        """Convert raw denoised tensor to the flat [1, action_dim] action.
+
+        Shared by forward() and forward_with_logprob() to keep the action
+        head logic in a single place.
+        """
         # BW: col 0 -> softmax with learnable temperature
         logits = raw[:, 0]
         logits = (logits - logits.mean()) / (logits.std() + 1e-6)
         tau = self.bw_temperature.abs().clamp_min(0.1) * self.temp_scale
         bw = torch.softmax(logits / tau, dim=0).unsqueeze(0)       # [1, n_tasks]
 
-        # relay: cols 1..n_relays -> sigmoid
-        relay = torch.sigmoid(
-            raw[:, 1: 1 + self.n_relays]
-        ).reshape(1, -1)                                             # [1, n_tasks*n_relays]
+        parts = [bw]
+        col = 1
+        if self.use_relay:
+            relay = torch.sigmoid(
+                raw[:, col: col + self.n_relays]
+            ).reshape(1, -1)                                         # [1, n_tasks*n_relays]
+            parts.append(relay)
+            col += self.n_relays
 
-        # MCS: cols n_relays+1.. -> sigmoid
-        mcs = torch.sigmoid(
-            raw[:, 1 + self.n_relays:]
-        ).reshape(1, -1)                                             # [1, n_tasks*n_mcs]
+        mcs = torch.sigmoid(raw[:, col:]).reshape(1, -1)              # [1, n_tasks*n_mcs]
+        parts.append(mcs)
 
-        return torch.cat([bw, relay, mcs], dim=-1)                  # [1, action_dim]
+        return torch.cat(parts, dim=-1)                              # [1, action_dim]
+
+    def forward_with_logprob(self, graph_emb, message_embs):
+        """Run reverse diffusion and return (action, log_pi).
+
+        log_pi is the sum of Gaussian log-probabilities over all stochastic
+        denoising steps n = N, N-1, ..., 2.  Step n=1 is deterministic (no
+        noise injected) and contributes 0 to log_pi.
+
+        Used by the actor loss when config.USE_ENTROPY_REG = True:
+            actor_loss = -Q.mean() - ENTROPY_COEFF * log_pi.mean()   (Eq. 33)
+
+        Gradients flow through both action and log_pi into the denoiser,
+        identical to the standard forward() gradient path.
+
+        Returns
+        -------
+        action   : Tensor [1, action_dim]
+        log_pi   : scalar Tensor  (sum over all tasks and steps)
+        """
+        device = graph_emb.device
+        if graph_emb.dim() == 1:
+            graph_emb = graph_emb.unsqueeze(0)
+        if message_embs is None:
+            raise ValueError("DDPMActor.forward_with_logprob requires message_embs")
+
+        a_n    = torch.randn(self.n_tasks, self.task_dim, device=device)
+        log_pi = torch.zeros(1, device=device)
+
+        for n in range(self.N, 0, -1):
+            beta_n  = self.betas[n - 1]
+            alpha_n = self.alphas[n - 1]
+            abar_n  = self.alphas_cumprod[n - 1]
+
+            eps_pred = self.denoiser(a_n, n, graph_emb, message_embs)
+            mean = (1.0 / torch.sqrt(alpha_n)) * (
+                a_n - (beta_n / torch.sqrt(1.0 - abar_n)) * eps_pred
+            )  # posterior mean, Eq. 30
+
+            if n > 1:
+                var    = self.beta_tilde[n - 1]               # posterior variance
+                noise  = torch.randn_like(a_n)
+                a_n    = mean + torch.sqrt(var) * noise
+                # Gaussian log-prob: -0.5*(z^2 + log(2π) + log(var))
+                log_pi = log_pi + (
+                    -0.5 * (noise.pow(2) + _LOG_2PI + torch.log(var))
+                ).sum()
+            else:
+                a_n = mean                                     # deterministic final step
+
+        action = self._raw_to_action(a_n)
+        return action, log_pi
 
 
 if __name__ == "__main__":
-    # Smoke test
-    actor = DDPMActor(n_tasks=20, n_relays=5, n_mcs=3)
-    ge = torch.randn(1, 256)
-    me = torch.randn(20, 256)
-    out = actor(ge, message_embs=me)
-    expected_dim = 20 + 20*5 + 20*3   # 180
-    assert out.shape == (1, expected_dim), f"Shape mismatch: {out.shape}, expected (1,{expected_dim})"
-    assert abs(out[0, :20].sum().item() - 1.0) < 0.01, f"BW doesn't sum to 1: {out[0,:20].sum()}"
-    # Check gradient flow
-    loss = -out.sum()
-    loss.backward()
-    gnorm = sum(p.grad.norm().item() for p in actor.denoiser.parameters() if p.grad is not None)
-    assert gnorm > 0, f"No gradient! gnorm={gnorm}"
-    print(f"DDPMActor smoke test PASSED: shape={out.shape}, BW sum={out[0,:20].sum():.4f}, grad_norm={gnorm:.4f}")
+    # Smoke test — both action layouts
+    for use_relay in (False, True):
+        actor = DDPMActor(n_tasks=20, n_relays=5, n_mcs=3, use_relay=use_relay)
+        ge = torch.randn(1, 256)
+        me = torch.randn(20, 256)
+        out = actor(ge, message_embs=me)
+        expected_dim = 20 + (20 * 5 if use_relay else 0) + 20 * 3   # 180 or 80
+        assert out.shape == (1, expected_dim), f"Shape mismatch: {out.shape}, expected (1,{expected_dim})"
+        assert abs(out[0, :20].sum().item() - 1.0) < 0.01, f"BW doesn't sum to 1: {out[0,:20].sum()}"
+        loss = -out.sum()
+        loss.backward()
+        gnorm = sum(p.grad.norm().item() for p in actor.denoiser.parameters() if p.grad is not None)
+        assert gnorm > 0, f"No gradient! gnorm={gnorm}"
+        print(f"DDPMActor use_relay={use_relay}: shape={out.shape}, "
+              f"BW sum={out[0,:20].sum():.4f}, grad_norm={gnorm:.4f}  PASSED")
