@@ -1,9 +1,13 @@
 """
-ablation_ddpm.py — Fig. 13b reproduction.
+ablation_ddpm.py — Fig. 13b reproduction + tpc=10 scale validation.
 
 Compares full HDM (HAN+DDPM) vs HDM without DDPM (HAN+MLP actor).
-Paper claim: full HDM outperforms no-DDPM by 12.5% at tpc=4 (20 tasks/CSCA).
+Paper claim: full HDM outperforms no-DDPM by ~12.5% at tpc=4.
+Audit fix: now runs at BOTH tpc=4 AND tpc=10 and writes a tpc column to CSV.
+
 Run: python code/experiments/ablation_ddpm.py
+Output: results/final/ablation_ddpm.csv  (columns: tpc, method, isr_mean, isr_std,
+                                           delay_mean, ddpm_improvement_pct)
 """
 
 import os
@@ -29,11 +33,13 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 _HAN_KEYS   = ["han", "han_state_dict", "han_network", "model"]
 _ACTOR_KEYS = ["actor", "actor_state_dict", "policy", "ddpm_actor", "mlp_actor"]
 
+
 def _find_key(ckpt, candidates, label):
     for k in candidates:
         if k in ckpt:
             return k
     raise KeyError(f"No {label} key in checkpoint. Keys: {list(ckpt.keys())}")
+
 
 def _load_ckpt(trainer, ckpt_path):
     if not os.path.exists(ckpt_path):
@@ -48,7 +54,8 @@ def _load_ckpt(trainer, ckpt_path):
     print(f"  Loaded checkpoint {isr_str} {ep_str}")
     return True
 
-def run_full_hdm(tpc=4):
+
+def run_full_hdm(tpc):
     """HAN + DDPM actor (full HDM). Reuses existing checkpoint if available."""
     print(f"\n--- Full HDM (HAN+DDPM) tpc={tpc} ---")
     set_seed(42)
@@ -60,16 +67,17 @@ def run_full_hdm(tpc=4):
         print("  No checkpoint found. Training from scratch (1000 episodes) ...")
         trainer.train(max_episodes=1000)
     mean_isr, std_isr, mean_delay, mean_dist = evaluate_policy(trainer, n_episodes=200)
-    print(f"  Full HDM: ISR={mean_isr:.4f} +/-{std_isr:.4f}  delay={mean_delay:.3f}s")
-    return mean_isr, std_isr
+    print(f"  Full HDM: ISR={mean_isr:.4f} ±{std_isr:.4f}  delay={mean_delay:.3f}s")
+    return mean_isr, std_isr, mean_delay
 
-def run_mlp_actor(tpc=4):
+
+def run_mlp_actor(tpc):
     """HAN + plain MLP actor (no DDPM). Always trains from scratch."""
     print(f"\n--- No-DDPM HDM (HAN+MLP actor) tpc={tpc} ---")
     set_seed(42)
     trainer = HANMLPTrainer(tasks_per_csca=tpc, difficulty="medium")
 
-    # Replace DDPMActor with plain MLPActor (from mlp_policy.py)
+    # Replace DDPMActor with plain MLPActor
     trainer.actor = MLPActor(
         graph_emb_dim=256,
         task_emb_dim=256,
@@ -87,32 +95,51 @@ def run_mlp_actor(tpc=4):
     _load_ckpt(trainer, ckpt_path)
 
     mean_isr, std_isr, mean_delay, mean_dist = evaluate_policy(trainer, n_episodes=200)
-    print(f"  No-DDPM HDM: ISR={mean_isr:.4f} +/-{std_isr:.4f}  delay={mean_delay:.3f}s")
-    return mean_isr, std_isr
+    print(f"  No-DDPM HDM: ISR={mean_isr:.4f} ±{std_isr:.4f}  delay={mean_delay:.3f}s")
+    return mean_isr, std_isr, mean_delay
 
-if __name__ == "__main__":
-    tpc = 4   # Paper Fig. 13b: 20 tasks/CSCA. Run tpc=10 separately for scale validation.
 
-    hdm_isr,    hdm_std    = run_full_hdm(tpc)
-    noddpm_isr, noddpm_std = run_mlp_actor(tpc)
+def run_one_tpc(tpc):
+    """Run full ablation for a single tpc value. Returns row dicts for CSV."""
+    hdm_isr,    hdm_std,    hdm_delay    = run_full_hdm(tpc)
+    noddpm_isr, noddpm_std, noddpm_delay = run_mlp_actor(tpc)
 
     improvement = (hdm_isr - noddpm_isr) / max(noddpm_isr, 1e-8) * 100
 
-    print("\n" + "=" * 50)
-    print(f"  DDPM ABLATION RESULT (tpc={tpc}, {'Fig. 13b' if tpc == 4 else 'scale validation'})")
-    print("=" * 50)
-    print(f"  Full HDM (HAN+DDPM) : ISR={hdm_isr:.4f} +/-{hdm_std:.4f}")
-    print(f"  No-DDPM (HAN+MLP)   : ISR={noddpm_isr:.4f} +/-{noddpm_std:.4f}")
+    label = "Fig. 13b" if tpc == 4 else "scale validation"
+    print("\n" + "=" * 55)
+    print(f"  DDPM ABLATION (tpc={tpc}, {label})")
+    print("=" * 55)
+    print(f"  Full HDM (HAN+DDPM) : ISR={hdm_isr:.4f} ±{hdm_std:.4f}  delay={hdm_delay:.3f}s")
+    print(f"  No-DDPM (HAN+MLP)   : ISR={noddpm_isr:.4f} ±{noddpm_std:.4f}  delay={noddpm_delay:.3f}s")
     print(f"  DDPM improvement    : +{improvement:.1f}%")
-    print(f"  Paper claim         : +12.5% at 20 tasks/CSCA")
-    print(f"  Status              : {'CONFIRMED' if improvement > 8.0 else 'BELOW PAPER CLAIM'}")
-    print("=" * 50)
+    if tpc == 4:
+        print(f"  Paper claim         : +12.5% at tpc=4")
+        status = "CONFIRMED" if improvement > 8.0 else "BELOW PAPER CLAIM"
+        print(f"  Status              : {status}")
+    print("=" * 55)
+
+    return [
+        {"tpc": tpc, "method": "HAN+DDPM", "isr_mean": f"{hdm_isr:.4f}",
+         "isr_std": f"{hdm_std:.4f}", "delay_mean": f"{hdm_delay:.3f}",
+         "ddpm_improvement_pct": ""},
+        {"tpc": tpc, "method": "HAN+MLP",  "isr_mean": f"{noddpm_isr:.4f}",
+         "isr_std": f"{noddpm_std:.4f}", "delay_mean": f"{noddpm_delay:.3f}",
+         "ddpm_improvement_pct": f"{improvement:.1f}"},
+    ]
+
+
+if __name__ == "__main__":
+    all_rows = []
+    for tpc in (4, 10):
+        rows = run_one_tpc(tpc)
+        all_rows.extend(rows)
 
     out = os.path.join(RESULTS_DIR, "ablation_ddpm.csv")
+    fieldnames = ["tpc", "method", "isr_mean", "isr_std", "delay_mean",
+                  "ddpm_improvement_pct"]
     with open(out, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["method", "isr_mean", "isr_std", "ddpm_improvement_pct"])
-        w.writerow(["HAN+DDPM", f"{hdm_isr:.4f}", f"{hdm_std:.4f}", ""])
-        w.writerow(["HAN+MLP",  f"{noddpm_isr:.4f}", f"{noddpm_std:.4f}",
-                    f"{improvement:.1f}"])
-    print(f"  Wrote {out}")
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        w.writerows(all_rows)
+    print(f"\nWrote {out}")
