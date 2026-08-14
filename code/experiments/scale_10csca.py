@@ -112,7 +112,7 @@ def make_trainer(tpc):
     ).to(DEVICE)
 
     # Rebuild critic and critic_target with correct action_dim
-    from train_han_mlp import MLPCritic
+    # MLPCritic already imported from mlp_policy above; no re-import needed
     trainer.critic = MLPCritic(
         state_dim=256, action_dim=trainer.action_dim, hidden_dim=512,
     ).to(DEVICE)

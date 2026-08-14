@@ -147,7 +147,7 @@ class LogPiTrainer(HANMLPTrainer):
         isr    = compute_isr(tasks)
 
         if not np.isfinite(reward):
-            return 0.0, 0.0, 0.0, 0.0
+            return 0.0, 0.0, 0.0, 0.0, None
 
         self.replay.append((graph_emb.detach(), action.detach(), reward))
         if len(self.replay) > self.replay_cap:
@@ -203,9 +203,9 @@ class LogPiTrainer(HANMLPTrainer):
             self.opt_han.zero_grad()
             self.opt_actor.zero_grad()
             self.opt_critic.zero_grad()
-            return 0.0, 0.0, 0.0, 0.0
+            return 0.0, 0.0, 0.0, 0.0, None
 
-        return reward, c_loss_val, a_loss_val, isr
+        return reward, c_loss_val, a_loss_val, isr, None  # no LAM in logpi ablation
 
 
 BASELINE_ISR_TPC4 = 0.3822

@@ -1,0 +1,632 @@
+{
+  "version": "1.0",
+  "description": "LKB intent corpus for CSCA-SemCom LAM pipeline",
+  "n_examples": 200,
+  "examples": [
+    {
+      "id": "intent_001",
+      "sentence": "send this short text note to my colleague right away",
+      "delay_s": 1.8,
+      "quality": 0.15,
+      "modality": "text",
+      "priority": "low"
+    },
+    {
+      "id": "intent_002",
+      "sentence": "forward this email draft whenever bandwidth is available",
+      "delay_s": 1.6,
+      "quality": 0.12,
+      "modality": "text",
+      "priority": "low"
+    },
+    {
+      "id": "intent_003",
+      "sentence": "upload my personal diary entry during off-peak hours",
+      "delay_s": 1.9,
+      "quality": 0.11,
+      "modality": "text",
+      "priority": "low"
+    },
+    {
+      "id": "intent_004",
+      "sentence": "sync my reading list to the cloud at some point today",
+      "delay_s": 2.0,
+      "quality": 0.14,
+      "modality": "text",
+      "priority": "low"
+    },
+    {
+      "id": "intent_005",
+      "sentence": "back up this shopping list to my remote storage overnight",
+      "delay_s": 1.7,
+      "quality": 0.10,
+      "modality": "text",
+      "priority": "low"
+    },
+    {
+      "id": "intent_006",
+      "sentence": "deliver this feedback form response with no urgency",
+      "delay_s": 1.8,
+      "quality": 0.13,
+      "modality": "text",
+      "priority": "low"
+    },
+    {
+      "id": "intent_007",
+      "sentence": "relay this trivia answer to the group chat when convenient",
+      "delay_s": 1.5,
+      "quality": 0.16,
+      "modality": "text",
+      "priority": "low"
+    },
+    {
+      "id": "intent_008",
+      "sentence": "transmit this blog post draft to my editor with low priority",
+      "delay_s": 1.9,
+      "quality": 0.20,
+      "modality": "text",
+      "priority": "low"
+    },
+    {
+      "id": "intent_009",
+      "sentence": "push this minor status update to the project board lazily",
+      "delay_s": 2.0,
+      "quality": 0.11,
+      "modality": "text",
+      "priority": "low"
+    },
+    {
+      "id": "intent_010",
+      "sentence": "archive this meeting summary to cloud storage in the background",
+      "delay_s": 1.6,
+      "quality": 0.18,
+      "modality": "text",
+      "priority": "low"
+    },
+    {
+      "id": "intent_011",
+      "sentence": "copy this recipe text to my personal server later tonight",
+      "delay_s": 1.7,
+      "quality": 0.12,
+      "modality": "text",
+      "priority": "low"
+    },
+    {
+      "id": "intent_012",
+      "sentence": "send the weekly newsletter draft when the link is idle",
+      "delay_s": 1.8,
+      "quality": 0.10,
+      "modality": "text",
+      "priority": "low"
+    },
+    {
+      "id": "intent_013",
+      "sentence": "transmit my workout log entry to the fitness app with no rush",
+      "delay_s": 1.5,
+      "quality": 0.17,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_014",
+      "sentence": "send a standard appointment confirmation message to the patient",
+      "delay_s": 1.2,
+      "quality": 0.24,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_015",
+      "sentence": "deliver this customer support reply within a reasonable time",
+      "delay_s": 1.3,
+      "quality": 0.22,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_016",
+      "sentence": "relay this order status update to the customer promptly",
+      "delay_s": 1.0,
+      "quality": 0.27,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_017",
+      "sentence": "push the daily briefing summary to the operations team",
+      "delay_s": 1.4,
+      "quality": 0.19,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_018",
+      "sentence": "transmit this system log excerpt to the monitoring dashboard",
+      "delay_s": 1.1,
+      "quality": 0.25,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_019",
+      "sentence": "forward the meeting agenda to all participants before the call",
+      "delay_s": 1.2,
+      "quality": 0.29,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_020",
+      "sentence": "send a routine inventory report to the warehouse manager",
+      "delay_s": 1.5,
+      "quality": 0.21,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_021",
+      "sentence": "relay this software update notification to registered users",
+      "delay_s": 1.3,
+      "quality": 0.23,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_022",
+      "sentence": "send a moderate-priority status check to the field team",
+      "delay_s": 1.0,
+      "quality": 0.18,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_023",
+      "sentence": "deliver a shift handover note to the incoming operator",
+      "delay_s": 1.4,
+      "quality": 0.26,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_024",
+      "sentence": "push this policy update reminder to the department staff",
+      "delay_s": 1.1,
+      "quality": 0.30,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_025",
+      "sentence": "transmit a traffic condition update to the routing server",
+      "delay_s": 1.2,
+      "quality": 0.20,
+      "modality": "text",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_026",
+      "sentence": "send urgent vehicle telemetry text report to fleet control",
+      "delay_s": 0.7,
+      "quality": 0.33,
+      "modality": "text",
+      "priority": "high"
+    },
+    {
+      "id": "intent_027",
+      "sentence": "deliver a high-priority security breach notification to the admin",
+      "delay_s": 0.6,
+      "quality": 0.35,
+      "modality": "text",
+      "priority": "high"
+    },
+    {
+      "id": "intent_028",
+      "sentence": "relay a power grid fault alert to the control center immediately",
+      "delay_s": 0.5,
+      "quality": 0.36,
+      "modality": "text",
+      "priority": "high"
+    },
+    {
+      "id": "intent_029",
+      "sentence": "push a fire alarm status message to the emergency coordinator",
+      "delay_s": 0.8,
+      "quality": 0.28,
+      "modality": "text",
+      "priority": "high"
+    },
+    {
+      "id": "intent_030",
+      "sentence": "transmit a patient deterioration alert text to the nurse station",
+      "delay_s": 0.6,
+      "quality": 0.34,
+      "modality": "text",
+      "priority": "high"
+    },
+    {
+      "id": "intent_031",
+      "sentence": "send an intrusion detection event summary to the security team",
+      "delay_s": 0.9,
+      "quality": 0.30,
+      "modality": "text",
+      "priority": "high"
+    },
+    {
+      "id": "intent_032",
+      "sentence": "forward a critical pipeline pressure reading to the control room",
+      "delay_s": 0.7,
+      "quality": 0.37,
+      "modality": "text",
+      "priority": "high"
+    },
+    {
+      "id": "intent_033",
+      "sentence": "relay a high-severity server crash notice to the on-call engineer",
+      "delay_s": 0.5,
+      "quality": 0.31,
+      "modality": "text",
+      "priority": "high"
+    },
+    {
+      "id": "intent_034",
+      "sentence": "deliver an urgent weather warning to field personnel right now",
+      "delay_s": 0.8,
+      "quality": 0.29,
+      "modality": "text",
+      "priority": "high"
+    },
+    {
+      "id": "intent_035",
+      "sentence": "send a time-sensitive bank transaction confirmation to the client",
+      "delay_s": 0.6,
+      "quality": 0.32,
+      "modality": "text",
+      "priority": "high"
+    },
+    {
+      "id": "intent_036",
+      "sentence": "push an urgent evacuation instruction text to on-site workers",
+      "delay_s": 0.9,
+      "quality": 0.33,
+      "modality": "text",
+      "priority": "high"
+    },
+    {
+      "id": "intent_037",
+      "sentence": "transmit a rapid drone position correction command to the UAV",
+      "delay_s": 0.7,
+      "quality": 0.28,
+      "modality": "text",
+      "priority": "high"
+    },
+    {
+      "id": "intent_038",
+      "sentence": "send a critical command override string to the actuator controller",
+      "delay_s": 0.3,
+      "quality": 0.38,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_039",
+      "sentence": "relay a cardiac arrest code blue text alert to the ICU team now",
+      "delay_s": 0.2,
+      "quality": 0.40,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_040",
+      "sentence": "deliver a missile intercept command to the defense subsystem instantly",
+      "delay_s": 0.1,
+      "quality": 0.39,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_041",
+      "sentence": "push a nuclear plant SCRAM instruction text at the lowest latency possible",
+      "delay_s": 0.1,
+      "quality": 0.40,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_042",
+      "sentence": "transmit a crash-imminent brake override command string to the AV controller",
+      "delay_s": 0.2,
+      "quality": 0.37,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_043",
+      "sentence": "send an emergency stop sequence text to the industrial robot arm",
+      "delay_s": 0.3,
+      "quality": 0.36,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_044",
+      "sentence": "relay a life-critical defibrillator trigger text command to the medical device",
+      "delay_s": 0.1,
+      "quality": 0.40,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_045",
+      "sentence": "deliver a gas leak shut-off command with minimum possible delay",
+      "delay_s": 0.2,
+      "quality": 0.38,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_046",
+      "sentence": "push a satellite collision avoidance burn command at ultra-low latency",
+      "delay_s": 0.1,
+      "quality": 0.39,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_047",
+      "sentence": "transmit an emergency landing abort command to the aircraft control system",
+      "delay_s": 0.3,
+      "quality": 0.35,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_048",
+      "sentence": "forward a zero-delay power cut command to the high-voltage substation",
+      "delay_s": 0.2,
+      "quality": 0.37,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_049",
+      "sentence": "relay a critical train emergency brake activation string to the rail controller",
+      "delay_s": 0.1,
+      "quality": 0.40,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_050",
+      "sentence": "send a critical flood gate closure command to the dam control system now",
+      "delay_s": 0.3,
+      "quality": 0.36,
+      "modality": "text",
+      "priority": "critical"
+    },
+    {
+      "id": "intent_051",
+      "sentence": "upload my vacation photo album to the cloud during the night",
+      "delay_s": 1.9,
+      "quality": 0.13,
+      "modality": "image",
+      "priority": "low"
+    },
+    {
+      "id": "intent_052",
+      "sentence": "sync a batch of scanned documents to the archive server overnight",
+      "delay_s": 2.0,
+      "quality": 0.10,
+      "modality": "image",
+      "priority": "low"
+    },
+    {
+      "id": "intent_053",
+      "sentence": "send this personal portrait photo to my friend with no urgency",
+      "delay_s": 1.6,
+      "quality": 0.14,
+      "modality": "image",
+      "priority": "low"
+    },
+    {
+      "id": "intent_054",
+      "sentence": "back up this collection of screenshots to remote storage lazily",
+      "delay_s": 1.8,
+      "quality": 0.12,
+      "modality": "image",
+      "priority": "low"
+    },
+    {
+      "id": "intent_055",
+      "sentence": "transfer this low-priority artwork file to the design team later",
+      "delay_s": 1.7,
+      "quality": 0.11,
+      "modality": "image",
+      "priority": "low"
+    },
+    {
+      "id": "intent_056",
+      "sentence": "share a thumbnail preview with the marketing channel when idle",
+      "delay_s": 1.5,
+      "quality": 0.16,
+      "modality": "image",
+      "priority": "low"
+    },
+    {
+      "id": "intent_057",
+      "sentence": "push a low-resolution map snapshot to the local cache overnight",
+      "delay_s": 2.0,
+      "quality": 0.10,
+      "modality": "image",
+      "priority": "low"
+    },
+    {
+      "id": "intent_058",
+      "sentence": "send this decorative image to the website editor at a low priority",
+      "delay_s": 1.9,
+      "quality": 0.15,
+      "modality": "image",
+      "priority": "low"
+    },
+    {
+      "id": "intent_059",
+      "sentence": "transmit this archived blueprint scan to cold storage someday",
+      "delay_s": 1.6,
+      "quality": 0.13,
+      "modality": "image",
+      "priority": "low"
+    },
+    {
+      "id": "intent_060",
+      "sentence": "relay a background wallpaper image to the display server later",
+      "delay_s": 1.7,
+      "quality": 0.11,
+      "modality": "image",
+      "priority": "low"
+    },
+    {
+      "id": "intent_061",
+      "sentence": "forward a non-critical satellite imagery tile to the analysis queue",
+      "delay_s": 1.8,
+      "quality": 0.20,
+      "modality": "image",
+      "priority": "low"
+    },
+    {
+      "id": "intent_062",
+      "sentence": "upload a low-priority product catalog image to the online store",
+      "delay_s": 1.5,
+      "quality": 0.12,
+      "modality": "image",
+      "priority": "low"
+    },
+    {
+      "id": "intent_063",
+      "sentence": "send a routine construction site photo to the project manager",
+      "delay_s": 1.2,
+      "quality": 0.25,
+      "modality": "image",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_064",
+      "sentence": "transmit a daily equipment inspection image to the maintenance team",
+      "delay_s": 1.4,
+      "quality": 0.22,
+      "modality": "image",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_065",
+      "sentence": "deliver a retail shelf-stocking image to the inventory dashboard",
+      "delay_s": 1.0,
+      "quality": 0.27,
+      "modality": "image",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_066",
+      "sentence": "relay a moderate-priority X-ray image to the radiology review queue",
+      "delay_s": 1.3,
+      "quality": 0.29,
+      "modality": "image",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_067",
+      "sentence": "push a weather satellite frame to the forecasting workstation",
+      "delay_s": 1.1,
+      "quality": 0.23,
+      "modality": "image",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_068",
+      "sentence": "forward a traffic camera snapshot to the operations center",
+      "delay_s": 1.5,
+      "quality": 0.19,
+      "modality": "image",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_069",
+      "sentence": "send a standard MRI slice to the remote diagnostic platform",
+      "delay_s": 1.2,
+      "quality": 0.26,
+      "modality": "image",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_070",
+      "sentence": "deliver a pipeline corrosion image to the inspection log system",
+      "delay_s": 1.0,
+      "quality": 0.24,
+      "modality": "image",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_071",
+      "sentence": "transmit an agricultural drone image to the crop monitoring service",
+      "delay_s": 1.4,
+      "quality": 0.21,
+      "modality": "image",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_072",
+      "sentence": "relay a routine border checkpoint photo to the verification server",
+      "delay_s": 1.3,
+      "quality": 0.28,
+      "modality": "image",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_073",
+      "sentence": "push a floor plan scan to the real estate listing platform on time",
+      "delay_s": 1.1,
+      "quality": 0.18,
+      "modality": "image",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_074",
+      "sentence": "send a medium-priority structural inspection photo to the civil team",
+      "delay_s": 1.5,
+      "quality": 0.30,
+      "modality": "image",
+      "priority": "medium"
+    },
+    {
+      "id": "intent_075",
+      "sentence": "deliver a production line defect image to the quality team urgently",
+      "delay_s": 0.6,
+      "quality": 0.33,
+      "modality": "image",
+      "priority": "high"
+    },
+    {
+      "id": "intent_076",
+      "sentence": "send a high-priority wildfire perimeter image to incident command",
+      "delay_s": 0.7,
+      "quality": 0.35,
+      "modality": "image",
+      "priority": "high"
+    },
+    {
+      "id": "intent_077",
+      "sentence": "relay a security camera frame showing a suspected intruder now",
+      "delay_s": 0.5,
+      "quality": 0.37,
+      "modality": "image",
+      "priority": "high"
+    },
+    {
+      "id": "intent_078",
+      "sentence": "push a real-time flood inundation map to the disaster response team",
+      "delay_s": 0.8,
+      "quality": 0.30,
+      "modality": "image",
+      "priority": "high"
+    },
+    {
+      "id": "intent_079",
+      "sentence": "transmit an

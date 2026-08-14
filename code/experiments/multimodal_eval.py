@@ -159,8 +159,8 @@ with open(r"{_encode_tmp_path()}", "r") as f:
     data = json.load(f)
 texts = data["orig"] + data["proc"]
 embs = model.encode(texts, batch_size=32, show_progress_bar=False, convert_to_numpy=True)
-orig = embs[:len(data["proc"])]
-proc = embs[len(data["proc"]):]
+orig = embs[:len(data["orig"])]
+proc = embs[len(data["orig"]):]
 sims = np.clip(np.array([
     float(np.dot(o/(np.linalg.norm(o)+1e-8), p/(np.linalg.norm(p)+1e-8)))
     for o, p in zip(orig, proc)
@@ -190,8 +190,8 @@ print(json.dumps(sims.tolist()))
     # Fallback: word-overlap Jaccard
     sims = []
     for o, p in zip(originals, processed):
-        so, sp = set(o.lower().split()), set(p.lower().split())
-        sims.append(len(so & sp) / max(len(so), 1))
+        so, sw = set(o.lower().split()), set(p.lower().split())
+        sims.append(len(so & sw) / max(len(so), 1))
     return np.clip(np.array(sims), 0.0, 1.0)
 
 

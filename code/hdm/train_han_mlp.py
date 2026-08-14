@@ -466,7 +466,7 @@ class HANMLPTrainer:
             self.opt_critic.zero_grad()
             return 0.0, 0.0, 0.0, 0.0
 
-        return reward, c_loss_val, a_loss_val, isr
+        return reward, c_loss_val, a_loss_val, isr, lam_comp_ratio
 
     # ------------------------------------------------------------------
     def train(self, max_episodes: int = 500):
@@ -474,7 +474,7 @@ class HANMLPTrainer:
             f"| difficulty={self.difficulty}")
 
         for ep in range(1, max_episodes + 1):
-            reward, c_loss, a_loss, isr = self.train_step()
+            reward, c_loss, a_loss, isr, lam_comp_ratio = self.train_step()
 
             if ep % 50 == 0:
                 lam_tag = (f" | LAM_comp: {lam_comp_ratio:.3f}"
