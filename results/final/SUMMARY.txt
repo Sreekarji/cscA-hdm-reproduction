@@ -1,7 +1,7 @@
 ============================================================
 CSCA-SemCom Final Results
 Policy: DDPM
-Generated: 2026-08-14 06:28:27
+Generated: 2026-08-12 08:33:10
 ============================================================
 
 --- tpc=1 (5 tasks) ---
@@ -44,13 +44,3 @@ Generated: 2026-08-14 06:28:27
 HDM improvement over Static at tpc=4: +7.2%
 HDM improvement over best RL baseline at tpc=4: +12.9%
 ============================================================
-
-============================================================
-HAN Architecture Ablation (Fig 13a equivalent)
-Generated: 2026-08-14 06:35:11
-tpc=4, 200 eval episodes, policy=ddpm, seed=42
-============================================================
-  HAN+DDPM (HDM):              ISR=0.7997 +/- 0.0895  delay=0.550s
-  MLPEncoder+DDPM (ablation):  ISR=0.6312 +/- 0.0964  delay=1.168s
-  HAN advantage: +26.7%
-  Verdict: HAN graph attention adds meaningful benefit. Architecture justified.

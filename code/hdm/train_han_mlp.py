@@ -247,10 +247,9 @@ class HANMLPTrainer:
 
         # Three separate optimisers — HAN updated ONLY through actor path
         actor_lr = 5e-4 if self.n_tasks >= 40 else (1e-4 if POLICY == "ddpm" else 3e-4)
-        critic_lr = 5e-4 if self.n_tasks >= 40 else 3e-4
         self.opt_han    = optim.Adam(self.han.parameters(),    lr=1e-4)
         self.opt_actor  = optim.Adam(self.actor.parameters(),  lr=actor_lr)
-        self.opt_critic = optim.Adam(self.critic.parameters(), lr=critic_lr)
+        self.opt_critic = optim.Adam(self.critic.parameters(), lr=3e-4)
 
         # Environment: medium difficulty so intents are physically achievable
         self.env = MultiCSCAEnvironment(
