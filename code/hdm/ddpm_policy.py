@@ -296,5 +296,5 @@ if __name__ == "__main__":
     # Test forward_with_logprob
     action50, log_pi = actor50.forward_with_logprob(ge50, me50)
     assert action50.shape == (1, expected50)
-    assert log_pi.dim() == 0, f"log_pi should be scalar, got {log_pi.shape}"
+    assert log_pi.numel() == 1, f"log_pi should be scalar, got {log_pi.shape}"
     print(f"forward_with_logprob: log_pi={log_pi.item():.4f}  PASSED")
