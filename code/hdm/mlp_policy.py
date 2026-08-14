@@ -112,13 +112,10 @@ class MLPActor(nn.Module):
 
 class MLPCritic(nn.Module):
     def __init__(self, state_dim: int = 256, action_dim: int = 45,
-                 hidden_dim: int = None):
+                 hidden_dim: int = 256):
         super().__init__()
-        input_dim = state_dim + action_dim
-        if hidden_dim is None:
-            hidden_dim = min(512, max(256, input_dim // 2))
         self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+            nn.Linear(state_dim + action_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
