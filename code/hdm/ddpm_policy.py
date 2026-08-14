@@ -22,49 +22,27 @@ _LOG_2PI = math.log(2 * math.pi)
 
 
 class PerTaskDenoiser(nn.Module):
-    """eps_theta(a_n^i, n | msg_emb_i, graph_emb) applied to every task i.
-
-    Shared backbone + per-task output heads to reduce task interference
-    at high task counts (tpc=10, 50 tasks).
-    """
+    """eps_theta(a_n^i, n | msg_emb_i, graph_emb) applied to every task i."""
     def __init__(self, task_action_dim=4, graph_emb_dim=256,
-                 task_emb_dim=256, hidden_dim=512, n_denoising_steps=6,
-                 n_tasks=None):
+                 task_emb_dim=256, hidden_dim=256, n_denoising_steps=6):
         super().__init__()
-        self.task_action_dim = task_action_dim
-        self.n_tasks = n_tasks
         self.time_emb = nn.Embedding(n_denoising_steps + 1, hidden_dim)
         cond_dim = graph_emb_dim + task_emb_dim + hidden_dim
-        input_dim = task_action_dim + cond_dim
-
-        # Shared backbone
-        self.backbone = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim), nn.SiLU(),
+        self.net = nn.Sequential(
+            nn.Linear(task_action_dim + cond_dim, hidden_dim), nn.SiLU(),
             nn.Linear(hidden_dim, hidden_dim), nn.SiLU(),
+            nn.Linear(hidden_dim, task_action_dim),
         )
-
-        # Per-task output heads
-        if n_tasks is not None and n_tasks > 0:
-            self.task_heads = nn.ModuleList([
-                nn.Linear(hidden_dim, task_action_dim) for _ in range(n_tasks)
-            ])
-        else:
-            # Fallback: single shared head for backward compatibility
-            self.task_heads = None
-            self.shared_head = nn.Linear(hidden_dim, task_action_dim)
-
         # Xavier init, last layer zeroed for near-identity at init
-        for m in self.backbone.modules():
+        last = None
+        for m in self.net.modules():
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight, gain=0.5)
                 nn.init.zeros_(m.bias)
-        if self.task_heads is not None:
-            for head in self.task_heads:
-                nn.init.zeros_(head.weight)
-                nn.init.zeros_(head.bias)
-        else:
-            nn.init.zeros_(self.shared_head.weight)
-            nn.init.zeros_(self.shared_head.bias)
+                last = m
+        if last is not None:
+            nn.init.zeros_(last.weight)
+            nn.init.zeros_(last.bias)
 
     def forward(self, a_n, n, graph_emb, message_embs):
         # a_n: [Nt, task_action_dim]; graph_emb: [1, 256]; message_embs: [Nt, 256]
@@ -72,17 +50,7 @@ class PerTaskDenoiser(nn.Module):
         t = self.time_emb(torch.tensor(n, dtype=torch.long, device=a_n.device))
         t = t.unsqueeze(0).expand(Nt, -1)
         g = graph_emb.expand(Nt, -1)
-        x = torch.cat([a_n, g, message_embs, t], dim=-1)  # [Nt, input_dim]
-
-        h = self.backbone(x)  # [Nt, hidden_dim]
-
-        if self.task_heads is not None:
-            # Per-task heads
-            out = torch.stack([self.task_heads[i](h[i:i+1]) for i in range(Nt)], dim=0)
-            return out.squeeze(1)  # [Nt, task_action_dim]
-        else:
-            # Shared head fallback
-            return self.shared_head(h)
+        return self.net(torch.cat([a_n, g, message_embs, t], dim=-1))
 
 
 class DDPMActor(nn.Module):
@@ -125,11 +93,8 @@ class DDPMActor(nn.Module):
         self.N = n_denoising_steps
         self.beta_min = beta_min
         self.beta_max = beta_max
-        self.denoiser = PerTaskDenoiser(
-                    self.task_dim, graph_emb_dim,
-                    task_emb_dim, hidden_dim=512, n_denoising_steps=n_denoising_steps,
-                    n_tasks=n_tasks
-                )
+        self.denoiser = PerTaskDenoiser(self.task_dim, graph_emb_dim,
+                                        task_emb_dim, hidden_dim, n_denoising_steps)
         self.bw_temperature = nn.Parameter(torch.tensor(1.0))
         self.register_buffer("temp_scale", torch.tensor(2.0))
         self._build_schedule()
@@ -277,24 +242,3 @@ if __name__ == "__main__":
         assert gnorm > 0, f"No gradient! gnorm={gnorm}"
         print(f"DDPMActor use_relay={use_relay}: shape={out.shape}, "
               f"BW sum={out[0,:20].sum():.4f}, grad_norm={gnorm:.4f}  PASSED")
-
-    # Smoke test — per-task heads at tpc=10 scale (50 tasks)
-    actor50 = DDPMActor(n_tasks=50, n_relays=5, n_mcs=3, use_relay=False, n_denoising_steps=7)
-    ge50 = torch.randn(1, 256)
-    me50 = torch.randn(50, 256)
-    out50 = actor50(ge50, message_embs=me50)
-    expected50 = 50 + 50 * 3  # 200
-    assert out50.shape == (1, expected50), f"Shape mismatch: {out50.shape}, expected (1,{expected50})"
-    assert abs(out50[0, :50].sum().item() - 1.0) < 0.01, f"BW doesn't sum to 1: {out50[0,:50].sum()}"
-    loss50 = -out50.sum()
-    loss50.backward()
-    gnorm50 = sum(p.grad.norm().item() for p in actor50.denoiser.parameters() if p.grad is not None)
-    assert gnorm50 > 0, f"No gradient! gnorm={gnorm50}"
-    print(f"DDPMActor n_tasks=50: shape={out50.shape}, "
-          f"BW sum={out50[0,:50].sum():.4f}, grad_norm={gnorm50:.4f}  PASSED")
-
-    # Test forward_with_logprob
-    action50, log_pi = actor50.forward_with_logprob(ge50, me50)
-    assert action50.shape == (1, expected50)
-    assert log_pi.dim() == 0, f"log_pi should be scalar, got {log_pi.shape}"
-    print(f"forward_with_logprob: log_pi={log_pi.item():.4f}  PASSED")
