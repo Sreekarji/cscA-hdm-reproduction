@@ -144,3 +144,64 @@ forward() output layout:
 
 **Checkpoint saved:** `han_ddpm_tpc4_relay_best.pt` (relay-in-action, ISR=0.7682, ep 500)
 **Revert action:** `sim_channel.py` returned to heuristic relay. No code change needed to DDPMActor (`parse_action` already extracts relay — just unused).
+
+## isr-v2 Experiments — 2026-08-14
+
+### Baseline (isr-improvements branch)
+tpc=1: 0.858 | tpc=2: 0.8725 | tpc=4: 0.7968 | tpc=10: 0.6267
+
+### isr-v2 results (all 5 changes active)
+tpc=1: 0.927 | tpc=2: 0.834 | tpc=4: 0.715 | tpc=10: 0.342
+
+### Changes attempted and verdict
+
+Change 1 — Adaptive critic LR (5e-4 if n_tasks>=40)
+  Result: REVERTED
+  Delta tpc=10: −45.4% (combined effect, cannot isolate)
+  Delta tpc=4:  −10.2%
+  Reason: Cannot isolate — all 5 changes active simultaneously.
+  Interaction with reward normalisation likely dominant.
+
+Change 2 — Scaled replay buffer (n_tasks * 100) + batch size
+  Result: REVERTED
+  Delta tpc=10: −45.4% (combined)
+  Delta tpc=4:  −10.2%
+  Reason: Cannot isolate. Larger buffer may have introduced
+  stale normalised rewards from early catastrophic episodes.
+
+Change 3 — Reward normalisation (EMA mean/std before buffer insert)
+  Result: REVERTED — PRIMARY SUSPECTED CAUSE
+  Delta tpc=10: −45.4% (combined)
+  Reason: tpc=10 CSCQI goes to −4.0 at ep 100 (visible in logs).
+  EMA std is tiny in early training; dividing by it amplifies
+  negative rewards by 10-100x. Actor learns to minimise ISR.
+  CSCQI going negative is a tpc=10 regime issue (tight deadlines,
+  50 tasks) — reward normalisation is unsafe when rewards can be
+  strongly negative. Do not re-attempt without reward clamping first.
+
+Change 4 — Wider critic hidden_dim 256 → 512
+  Result: REVERTED
+  Reason: Wider critic with normalised rewards produced unstable
+  Q-estimates. Cannot assess in isolation. Retest only after
+  reward normalisation is confirmed safe.
+
+Change 5 — Per-task denoiser heads (shared backbone + task heads)
+  Result: REVERTED
+  Reason: Architecture change likely needs more than 1000 episodes
+  to converge given larger parameter count. May still be valid
+  with 2000+ episodes. Retest in isolation if episode budget
+  increases.
+
+### Root cause summary
+Reward normalisation (Change 3) is the primary failure mode.
+EMA-based normalisation is unsafe when episode rewards are
+strongly negative (tpc=10 regime). All other changes are
+contaminated by this instability and cannot be assessed.
+The only clean result: tpc=1 improved 0.858→0.927, suggesting
+Changes 1-2 help at low task counts where rewards stay positive.
+
+### Lesson
+Never combine reward normalisation with architecture changes
+in a single run. Test reward normalisation alone first with
+a reward floor (clip CSCQI to [0, inf] before normalising)
+or use return normalisation (normalise across batch, not EMA).
