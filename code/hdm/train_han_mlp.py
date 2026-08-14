@@ -386,13 +386,8 @@ class HANMLPTrainer:
         if not np.isfinite(reward):
             return 0.0, 0.0, 0.0, 0.0
 
-        # ---- Reward normalisation (running mean/std) ----
-        self._ema_reward = self._ema_alpha * reward + (1 - self._ema_alpha) * self._ema_reward
-        self._ema_std = 0.99 * self._ema_std + 0.01 * abs(reward - self._ema_reward)
-        r_norm = (reward - self._ema_reward) / (self._ema_std + 1e-8)
-
         # ---- Store transition in replay buffer (FIX 17a) ----
-        self.replay.append((graph_emb.detach(), action.detach(), r_norm))
+        self.replay.append((graph_emb.detach(), action.detach(), reward))
         if len(self.replay) > self.replay_cap:
             self.replay.pop(0)
 
