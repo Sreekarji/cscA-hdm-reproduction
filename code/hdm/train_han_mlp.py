@@ -266,11 +266,10 @@ class HANMLPTrainer:
         # EMA baseline for reward normalisation (reduces variance without bias)
         self._ema_reward = 0.0
         self._ema_alpha = 0.05
-        self._ema_std = 1.0
 
         self.replay = []
-        self.replay_cap = max(1000, self.n_tasks * 100)
-        self.critic_batch = min(256, self.replay_cap // 4)
+        self.replay_cap = 1000
+        self.critic_batch = 256
         self.critic_updates_per_step = 2
         self.critic_target = copy.deepcopy(self.critic).to(self.device)
         for _p in self.critic_target.parameters():
