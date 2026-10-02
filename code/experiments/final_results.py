@@ -49,7 +49,7 @@ def run_one_tpc(tpc):
     # Train HDM
     set_seed(42)
     trainer = HANMLPTrainer(tasks_per_csca=tpc, difficulty="medium")
-    best_isr = trainer.train(max_episodes=1000)
+    best_isr = trainer.train(max_episodes=100)
 
     # Load best checkpoint
     ckpt_path = os.path.join(CHECKPOINT_PATH, f"han_{POLICY}_tpc{tpc}_best.pt")

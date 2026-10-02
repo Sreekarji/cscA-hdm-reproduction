@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -25,7 +25,6 @@ repos/
 *.safetensors
 
 # Checkpoints
-results/checkpoints/
 
 # Logs
 log.txt
@@ -35,7 +34,7 @@ log.txt
 results/final/*.png
 results/final/*.json
 
-# Result CSVs — keep these tracked (they are the output record)
+# Result CSVs â€” keep these tracked (they are the output record)
 # (no exclusion for *.csv)
 
 # OS
